@@ -7,8 +7,12 @@
   pozor pri ulozeni do ineho adresara prekopirovat aj adresar utility
  */
 
+#ifdef __INTELLISENSE__
+#pragma diag_suppress 350
+#endif
+
 #include <Arduino.h>
-#include "EthernetENC.h"
+// #include "EthernetENC.h"
 #include "ModbusTCPSlave.h"
 #include "esp_system.h"
 #include "ModbusRtu.h" //komunikacia modbus slave
@@ -22,6 +26,68 @@
 
 #include <Adafruit_GFX.h>
 #include "Adafruit_SSD1306.h"
+
+#include <Firebase_ESP_Client.h>
+
+// Provide the token generation process info.
+#include "addons/TokenHelper.h"
+// Provide the RTDB payload printing info and other helper functions.
+#include "addons/RTDBHelper.h"
+
+// Insert your network credentials
+#define WIFI_SSID "Robom"
+#define WIFI_PASSWORD "starbucksCOFFEE100"
+
+// Insert Firebase project API Key
+#define API_KEY "AIzaSyCIQN38pHQlcLp0_ujse-owqncyLZIHTLk"
+
+// Insert Authorized Email and Corresponding Password
+#define USER_EMAIL "robert.mysza@gmail.com"
+#define USER_PASSWORD "frekvencnyMENIC230."
+
+// Insert RTDB URLefine the RTDB URL */
+#define DATABASE_URL "https://coolerstation-32933-default-rtdb.europe-west1.firebasedatabase.app/"
+
+// Define Firebase Data object
+FirebaseData fbdo;
+
+// Define Firebase objects
+FirebaseAuth auth;
+FirebaseConfig config;
+
+// Database paths
+String espDataPath = "/ESPData";
+String dataPath = "/Data";
+String actualPath = "/ActualData";
+
+// Variable to save USER UID
+String uid;
+
+// Device SSID
+String ssid;
+
+int timestamp;
+FirebaseJson json;
+
+const char *ntpServer = "pool.ntp.org";
+
+// Define millis timer
+unsigned long timerActualData = 0;
+unsigned long timerData = 0;
+unsigned long timerDelayActualData = 5;
+unsigned long timerDelayData = 15;
+
+// Real-time data
+float energiaAktualna = 0;
+float vykonCinny1 = 0;
+float vykonCinny2 = 0;
+float teplotaVonkajsia = 0;
+
+// Data
+float energiaVyrobenaCelkovo = 0;
+float energiaSpotrebovana1 = 0;
+float energiaSpotrebovana2 = 0;
+float energiaSpotrebovanaCelkovo = 0;
 
 #define SCREEN_WIDTH 128    // OLED display width, in pixels
 #define SCREEN_HEIGHT 64    // OLED display height, in pixels
@@ -115,6 +181,18 @@ String displayString = "WAITING";
 // that you want to connect to (port 80 is default for HTTP):
 EthernetClient client;
 
+// Initialize WiFi
+void initWiFi()
+{
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print(".");
+    delay(300);
+  }
+  displayString = "IP " + WiFi.localIP().toString();
+}
+
 //--------------------------  O L E D   ----------------------------------------------------------------------------
 void oled1()
 {
@@ -190,27 +268,27 @@ void setup()
   delay(500);
   digitalWrite(led, false);
 
-  Ethernet.init(ETH_CS);
+  // Ethernet.init(ETH_CS);
 
-  Ethernet.begin(mac, ip, myDns);
+  // Ethernet.begin(mac, ip, myDns);
 
-  // give the Ethernet shield a second to initialize:
-  delay(1000);
+  // // give the Ethernet shield a second to initialize:
+  // delay(1000);
 
-  if (client.connect("192.168.1.126", 9000))
-  {
-    displayString = "Connected to " + String(client.remoteIP());
-    // Make a HTTP request:
-    client.println("GET / HTTP/1.1");
-    client.println("Host: 192.168.1.126:9000");
-    client.println("Connection: close");
-    client.println();
-  }
-  else
-  {
-    // if you didn't get a connection to the server:
-    displayString = "connection failed";
-  }
+  // if (client.connect("192.168.1.126", 9000))
+  // {
+  //   displayString = "Connected to " + String(client.remoteIP());
+  //   // Make a HTTP request:
+  //   client.println("GET / HTTP/1.1");
+  //   client.println("Host: 192.168.1.126:9000");
+  //   client.println("Connection: close");
+  //   client.println();
+  // }
+  // else
+  // {
+  //   // if you didn't get a connection to the server:
+  //   displayString = "connection failed";
+  // }
 
   Mb.begin();
   //  rtc.init();
@@ -276,7 +354,49 @@ void setup()
     myRTC.setDS1302Time(00, 40, 10, 1, 29, 1, 2024);
     oled1();
   }
+
+  initWiFi();
+
   //------------------------------------------------------------------------------------
+  /* Assign the api key (required) */
+  config.api_key = API_KEY;
+
+  /* Assign the user sign in credentials */
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+
+  /* Assign the RTDB URL (required) */
+  config.database_url = DATABASE_URL;
+
+  /* Assign the callback function for the long running token generation task */
+  config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
+
+  // Comment or pass false value when WiFi reconnection will control by your code or third party library e.g. WiFiManager
+  Firebase.reconnectNetwork(true);
+
+  // Since v4.4.x, BearSSL engine was used, the SSL buffer need to be set.
+  // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
+  // fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
+
+  // Initialize the library with the Firebase authen and config
+  Firebase.begin(&config, &auth);
+
+  while ((auth.token.uid) == "")
+  {
+    Serial.print('.');
+    delay(1000);
+  }
+  // Print user UID
+  uid = auth.token.uid.c_str();
+  displayString = "UID: " + uid;
+
+  // Get device SSID
+  char c_ssid[23];
+  snprintf(c_ssid, 23, "ESP32-%llX", ESP.getEfuseMac());
+  ssid = String(c_ssid);
+
+  // Update database path
+  espDataPath += "/" + ssid;
 }
 // ###############################  S E T U P   #############################################################
 
@@ -339,6 +459,47 @@ void loop()
   {
     casOLED = 0;
     oled1();
+
+    if (Firebase.ready())
+    {
+      displayString = "Firebase ready";
+
+      timestamp = 9999;
+
+      // Read data
+      energiaAktualna = random(0, 100);
+      vykonCinny1 = random(0, 100);
+      vykonCinny2 = random(0, 100);
+      teplotaVonkajsia = random(0, 100);
+
+      json.set((actualPath + "/energiaAktualna").c_str(), String(energiaAktualna));
+      json.set((actualPath + "/vykonCinny1").c_str(), String(vykonCinny1));
+      json.set((actualPath + "/vykonCinny2").c_str(), String(vykonCinny2));
+      json.set((actualPath + "/teplotaVonkajsia").c_str(), String(teplotaVonkajsia));
+      json.set((actualPath + "/timestamp").c_str(), String(timestamp));
+
+      if (timerData > timerDelayData)
+      {
+        timerData = 0;
+
+        // Read data
+        energiaVyrobenaCelkovo = random(0, 100);
+        energiaSpotrebovana1 = random(0, 100);
+        energiaSpotrebovana2 = random(0, 100);
+        energiaSpotrebovanaCelkovo = random(0, 100);
+
+        String dataTimePath = dataPath + "/" + String(timestamp) + "/";
+
+        json.set((dataTimePath + "/energiaVyrobenaCelkovo").c_str(), String(energiaVyrobenaCelkovo));
+        json.set((dataTimePath + "/energiaSpotrebovana1").c_str(), String(energiaSpotrebovana1));
+        json.set((dataTimePath + "/energiaSpotrebovana2").c_str(), String(energiaSpotrebovana2));
+        json.set((dataTimePath + "/energiaSpotrebovanaCelkovo").c_str(), String(energiaSpotrebovanaCelkovo));
+        json.set((dataTimePath + "/teplotaVonkajsia").c_str(), String(teplotaVonkajsia));
+        json.set((dataTimePath + "/timestamp").c_str(), String(timestamp));
+      }
+
+      displayString = Firebase.RTDB.setJSON(&fbdo, espDataPath.c_str(), &json) ? "ok" : fbdo.errorReason().c_str();
+    }
   }
 
   //---------------casovace ------------------------------------
