@@ -257,7 +257,7 @@ void setupFirebase()
 
   // Since v4.4.x, BearSSL engine was used, the SSL buffer need to be set.
   // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
-  fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
+  // fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
 
   displayString = "Firebase begin";
   oled1();
@@ -265,14 +265,16 @@ void setupFirebase()
   // Initialize the library with the Firebase authen and config
   Firebase.begin(&config, &auth);
 
-  // while ((auth.token.uid) == "")
-  // {
-  //   Serial.print('.');
-  //   delay(1000);
-  // }
-  // // Print user UID
-  // uid = auth.token.uid.c_str();
-  // displayString = "UID: " + uid;
+  while ((auth.token.uid) == "")
+  {
+    displayString = "UID waiting";
+    oled1();
+    delay(1000);
+  }
+  // Print user UID
+  uid = auth.token.uid.c_str();
+  displayString = "UID: " + uid;
+  oled1();
 }
 
 void testFirebase()
@@ -352,25 +354,25 @@ void setup()
   delay(200);
   digitalWrite(led, true);
 
-  // if (digitalRead(SD_ok) == false)
-  // {
-  //   SPI.begin(SCK, MISO, MOSI, SS);
-  //   if (!SD.begin(chipSelect))
-  //   {
-  //     Serial.println("Card Mount Failed");
-  //     return;
-  //   }
-  // }
-  // delay(500);
-  // digitalWrite(led, false);
+  if (digitalRead(SD_ok) == false)
+  {
+    SPI.begin(SCK, MISO, MOSI, SS);
+    if (!SD.begin(chipSelect))
+    {
+      Serial.println("Card Mount Failed");
+      return;
+    }
+  }
+  delay(500);
+  digitalWrite(led, false);
+
+  Ethernet.init(ETH_CS);
 
   displayString = "Setup Firebase";
   oled1();
   setupFirebase();
   displayString = "Firebase OK";
   oled1();
-
-  // Ethernet.init(ETH_CS);
 
   // Ethernet.begin(mac, ip, myDns);
 
