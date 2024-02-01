@@ -281,7 +281,7 @@ void testFirebase()
 {
   displayString = "Firebase ready";
 
-  timestamp = 9999;
+  String timestamp = String(rok) + "/" + String(mesiac) + "/" + String(den) + "-" + String(hodiny) + ":" + String(minuty) + ":" + String(sekundy);
 
   // Read data
   energiaAktualna = random(0, 100);
@@ -293,7 +293,7 @@ void testFirebase()
   json.set((actualPath + "/vykonCinny1").c_str(), String(vykonCinny1));
   json.set((actualPath + "/vykonCinny2").c_str(), String(vykonCinny2));
   json.set((actualPath + "/teplotaVonkajsia").c_str(), String(teplotaVonkajsia));
-  json.set((actualPath + "/timestamp").c_str(), String(timestamp));
+  json.set((actualPath + "/timestamp").c_str(), timestamp);
 
   if (timerData > timerDelayData)
   {
