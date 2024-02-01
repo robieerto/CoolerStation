@@ -12,7 +12,8 @@
 #endif
 
 #include <Arduino.h>
-// #include "EthernetENC.h"
+// #include <Ethernet.h>
+#include "EthernetENC.h"
 #include "ModbusTCPSlave.h"
 #include "esp_system.h"
 #include "ModbusRtu.h" //komunikacia modbus slave
@@ -68,6 +69,7 @@ String ssid;
 
 int timestamp;
 FirebaseJson json;
+bool firebaseConfigReady = false;
 
 const char *ntpServer = "pool.ntp.org";
 
@@ -171,6 +173,12 @@ byte ip[] = {192, 168, 1, 55};
 byte gateway[] = {192, 168, 1, 1};
 byte subnet[] = {255, 255, 255, 0};
 
+// Define IP address
+IPAddress staticIP(192, 168, 1, 55);  // Change to your desired static IP
+IPAddress gatewayIP(192, 168, 1, 1);  // Change to your network gateway
+IPAddress subnetIP(255, 255, 255, 0); // Change to your network subnet
+Firebase_StaticIP staIP(staticIP, subnetIP, gatewayIP, gatewayIP, true);
+
 //------------- modbus TCP IP ---------------------
 ModbusTCPSlave Mb;
 
@@ -220,6 +228,94 @@ void oled1()
   display.print("couter= " + String(couter));
   display.display();
 }
+
+void setupFirebase()
+{
+  if (firebaseConfigReady)
+    return;
+
+  firebaseConfigReady = true;
+
+  /* Assign the api key (required) */
+  config.api_key = API_KEY;
+
+  /* Assign the user sign in credentials */
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+
+  /* Assign the RTDB URL (required) */
+  config.database_url = DATABASE_URL;
+
+  /* Assign the callback function for the long running token generation task */
+  config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
+
+  /* Assign the pointer to global defined Ethernet Client object */
+  fbdo.setEthernetClient(&client, mac, ETH_CS, reset_eth, &staIP); // The staIP can be assigned to the fifth param
+
+  // Comment or pass false value when WiFi reconnection will control by your code or third party library e.g. WiFiManager
+  // Firebase.reconnectNetwork(true);
+
+  // Since v4.4.x, BearSSL engine was used, the SSL buffer need to be set.
+  // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
+  fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
+
+  displayString = "Firebase begin";
+  oled1();
+
+  // Initialize the library with the Firebase authen and config
+  Firebase.begin(&config, &auth);
+
+  // while ((auth.token.uid) == "")
+  // {
+  //   Serial.print('.');
+  //   delay(1000);
+  // }
+  // // Print user UID
+  // uid = auth.token.uid.c_str();
+  // displayString = "UID: " + uid;
+}
+
+void testFirebase()
+{
+  displayString = "Firebase ready";
+
+  timestamp = 9999;
+
+  // Read data
+  energiaAktualna = random(0, 100);
+  vykonCinny1 = random(0, 100);
+  vykonCinny2 = random(0, 100);
+  teplotaVonkajsia = random(0, 100);
+
+  json.set((actualPath + "/energiaAktualna").c_str(), String(energiaAktualna));
+  json.set((actualPath + "/vykonCinny1").c_str(), String(vykonCinny1));
+  json.set((actualPath + "/vykonCinny2").c_str(), String(vykonCinny2));
+  json.set((actualPath + "/teplotaVonkajsia").c_str(), String(teplotaVonkajsia));
+  json.set((actualPath + "/timestamp").c_str(), String(timestamp));
+
+  if (timerData > timerDelayData)
+  {
+    timerData = 0;
+
+    // Read data
+    energiaVyrobenaCelkovo = random(0, 100);
+    energiaSpotrebovana1 = random(0, 100);
+    energiaSpotrebovana2 = random(0, 100);
+    energiaSpotrebovanaCelkovo = random(0, 100);
+
+    String dataTimePath = dataPath + "/" + String(timestamp) + "/";
+
+    json.set((dataTimePath + "/energiaVyrobenaCelkovo").c_str(), String(energiaVyrobenaCelkovo));
+    json.set((dataTimePath + "/energiaSpotrebovana1").c_str(), String(energiaSpotrebovana1));
+    json.set((dataTimePath + "/energiaSpotrebovana2").c_str(), String(energiaSpotrebovana2));
+    json.set((dataTimePath + "/energiaSpotrebovanaCelkovo").c_str(), String(energiaSpotrebovanaCelkovo));
+    json.set((dataTimePath + "/teplotaVonkajsia").c_str(), String(teplotaVonkajsia));
+    json.set((dataTimePath + "/timestamp").c_str(), String(timestamp));
+  }
+
+  displayString = Firebase.RTDB.setJSON(&fbdo, espDataPath.c_str(), &json) ? "ok" : fbdo.errorReason().c_str();
+}
+
 // ###############################  S E T U P   #############################################################
 
 void setup()
@@ -256,24 +352,30 @@ void setup()
   delay(200);
   digitalWrite(led, true);
 
-  if (digitalRead(SD_ok) == false)
-  {
-    SPI.begin(SCK, MISO, MOSI, SS);
-    if (!SD.begin(chipSelect))
-    {
-      Serial.println("Card Mount Failed");
-      return;
-    }
-  }
-  delay(500);
-  digitalWrite(led, false);
+  // if (digitalRead(SD_ok) == false)
+  // {
+  //   SPI.begin(SCK, MISO, MOSI, SS);
+  //   if (!SD.begin(chipSelect))
+  //   {
+  //     Serial.println("Card Mount Failed");
+  //     return;
+  //   }
+  // }
+  // delay(500);
+  // digitalWrite(led, false);
+
+  displayString = "Setup Firebase";
+  oled1();
+  setupFirebase();
+  displayString = "Firebase OK";
+  oled1();
 
   // Ethernet.init(ETH_CS);
 
   // Ethernet.begin(mac, ip, myDns);
 
-  // // give the Ethernet shield a second to initialize:
-  // delay(1000);
+  // give the Ethernet shield a second to initialize:
+  delay(1000);
 
   // if (client.connect("192.168.1.126", 9000))
   // {
@@ -355,40 +457,7 @@ void setup()
     oled1();
   }
 
-  initWiFi();
-
-  //------------------------------------------------------------------------------------
-  /* Assign the api key (required) */
-  config.api_key = API_KEY;
-
-  /* Assign the user sign in credentials */
-  auth.user.email = USER_EMAIL;
-  auth.user.password = USER_PASSWORD;
-
-  /* Assign the RTDB URL (required) */
-  config.database_url = DATABASE_URL;
-
-  /* Assign the callback function for the long running token generation task */
-  config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
-
-  // Comment or pass false value when WiFi reconnection will control by your code or third party library e.g. WiFiManager
-  Firebase.reconnectNetwork(true);
-
-  // Since v4.4.x, BearSSL engine was used, the SSL buffer need to be set.
-  // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
-  // fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
-
-  // Initialize the library with the Firebase authen and config
-  Firebase.begin(&config, &auth);
-
-  while ((auth.token.uid) == "")
-  {
-    Serial.print('.');
-    delay(1000);
-  }
-  // Print user UID
-  uid = auth.token.uid.c_str();
-  displayString = "UID: " + uid;
+  // initWiFi();
 
   // Get device SSID
   char c_ssid[23];
@@ -462,43 +531,7 @@ void loop()
 
     if (Firebase.ready())
     {
-      displayString = "Firebase ready";
-
-      timestamp = 9999;
-
-      // Read data
-      energiaAktualna = random(0, 100);
-      vykonCinny1 = random(0, 100);
-      vykonCinny2 = random(0, 100);
-      teplotaVonkajsia = random(0, 100);
-
-      json.set((actualPath + "/energiaAktualna").c_str(), String(energiaAktualna));
-      json.set((actualPath + "/vykonCinny1").c_str(), String(vykonCinny1));
-      json.set((actualPath + "/vykonCinny2").c_str(), String(vykonCinny2));
-      json.set((actualPath + "/teplotaVonkajsia").c_str(), String(teplotaVonkajsia));
-      json.set((actualPath + "/timestamp").c_str(), String(timestamp));
-
-      if (timerData > timerDelayData)
-      {
-        timerData = 0;
-
-        // Read data
-        energiaVyrobenaCelkovo = random(0, 100);
-        energiaSpotrebovana1 = random(0, 100);
-        energiaSpotrebovana2 = random(0, 100);
-        energiaSpotrebovanaCelkovo = random(0, 100);
-
-        String dataTimePath = dataPath + "/" + String(timestamp) + "/";
-
-        json.set((dataTimePath + "/energiaVyrobenaCelkovo").c_str(), String(energiaVyrobenaCelkovo));
-        json.set((dataTimePath + "/energiaSpotrebovana1").c_str(), String(energiaSpotrebovana1));
-        json.set((dataTimePath + "/energiaSpotrebovana2").c_str(), String(energiaSpotrebovana2));
-        json.set((dataTimePath + "/energiaSpotrebovanaCelkovo").c_str(), String(energiaSpotrebovanaCelkovo));
-        json.set((dataTimePath + "/teplotaVonkajsia").c_str(), String(teplotaVonkajsia));
-        json.set((dataTimePath + "/timestamp").c_str(), String(timestamp));
-      }
-
-      displayString = Firebase.RTDB.setJSON(&fbdo, espDataPath.c_str(), &json) ? "ok" : fbdo.errorReason().c_str();
+      testFirebase();
     }
   }
 
