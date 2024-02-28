@@ -14,6 +14,7 @@
 #include <Arduino.h>
 // #include <Ethernet.h>
 #include "EthernetENC.h"
+#include "ModbusTCPSlave.h"
 #include "esp_system.h"
 #include "ModbusRtu.h" //komunikacia modbus slave
 #include <SPI.h>
@@ -28,7 +29,6 @@
 #include "Adafruit_SSD1306.h"
 
 #include <Firebase_ESP_Client.h>
-#include <CircularBuffer.hpp>
 
 // Provide the token generation process info.
 #include "addons/TokenHelper.h"
@@ -68,45 +68,38 @@ String uid;
 String ssid;
 
 int timestamp;
-FirebaseJson jsonLive;
-FirebaseJson jsonDb;
+FirebaseJson json;
 bool firebaseConfigReady = false;
 
 const char *ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 3600;
-const int daylightOffset_sec = 3600;
 
 // Define millis timer
 unsigned long timerActualData = 0;
 unsigned long timerData = 0;
+unsigned long timerDelayActualData = 5000;
+unsigned long timerDelayData = 15000;
 
 // Real-time data
-uint32_t energiaAktualna;
+float energiaAktualna;
 float vykonCinny1;
 float vykonCinny2;
 float teplotaVonkajsia;
 
 // Data
-float energiaVyrobena1;
-float energiaVyrobena2;
 float energiaVyrobenaCelkovo;
-uint32_t energiaCelkovo;
+float energiaSpotrebovana1;
+float energiaSpotrebovana2;
+float energiaSpotrebovanaCelkovo;
 
-// History data
-typedef struct HistoryData
-{
-  float energiaVyrobena1;
-  float energiaVyrobena2;
-  float energiaVyrobenaCelkovo;
-  uint32_t energiaCelkovo;
-  float teplotaVonkajsia;
-  String timestamp;
-} HistoryData;
-CircularBuffer<HistoryData, 10> historyData;
+// History arrays
+float energiaVyrobenaCelkovoHistory[10];
+float energiaSpotrebovana1History[10];
+float energiaSpotrebovana2History[10];
+float energiaSpotrebovanaCelkovoHistory[10];
+float teplotaVonkajsiaHistory[10];
+String timestampHistory[10];
 
 int historyCounter;
-
-EthernetLinkStatus ethernetLinkStatus;
 
 #define SCREEN_WIDTH 128    // OLED display width, in pixels
 #define SCREEN_HEIGHT 64    // OLED display height, in pixels
@@ -162,9 +155,24 @@ int casRTC;
 bool komunikacia;
 int32_t prirastok;
 
+uint32_t vykonI32;
+uint16_t vykonI16;
+float vykonR;
+
+uint32_t energiaI32;
+uint16_t energiaI16;
+float energiaR;
+int smernik;
+uint16_t rok;
+uint16_t mesiac;
+uint16_t den;
+uint16_t hodiny;
+uint16_t minuty;
+uint16_t sekundy;
+uint16_t couter;
 // ##########################################################################
 
-bool connected;
+// bool connected;
 /* Ethernet */
 // Enter a MAC address for your controller below.
 // Newer Ethernet shields have a MAC address printed on a sticker on the shield
@@ -180,6 +188,9 @@ IPAddress staticIP(192, 168, 1, 55);  // Change to your desired static IP
 IPAddress gatewayIP(192, 168, 1, 1);  // Change to your network gateway
 IPAddress subnetIP(255, 255, 255, 0); // Change to your network subnet
 Firebase_StaticIP staIP(staticIP, subnetIP, gatewayIP, gatewayIP, true);
+
+//------------- modbus TCP IP ---------------------
+ModbusTCPSlave Mb;
 
 String displayString = "WAITING";
 
@@ -221,7 +232,7 @@ void oled1()
   display.print(displayString);
   display.setTextSize(2);
   display.setCursor(20, 32);
-  display.print(String(myRTC.hours) + ":" + String(myRTC.minutes) + ":" + String(myRTC.seconds));
+  display.print(String(hodiny) + ":" + String(minuty) + ":" + String(sekundy));
   display.setTextSize(1);
   display.setCursor(10, 55);
   display.print("casSD= " + String(casSD));
@@ -249,14 +260,14 @@ void setupFirebase()
   config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
 
   /* Assign the pointer to global defined Ethernet Client object */
-  fbdo.setEthernetClient(&client, mac, ETH_CS, reset_eth, &staIP); // The staIP can be assigned to the fifth param
+  // fbdo.setEthernetClient(&client, mac, ETH_CS, reset_eth, &staIP); // The staIP can be assigned to the fifth param
 
   // Comment or pass false value when WiFi reconnection will control by your code or third party library e.g. WiFiManager
   // Firebase.reconnectNetwork(true);
 
   // Since v4.4.x, BearSSL engine was used, the SSL buffer need to be set.
   // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
-  fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
+  // fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
 
   displayString = "Firebase begin";
   oled1();
@@ -276,104 +287,33 @@ void setupFirebase()
   oled1();
 }
 
-String getTimestamp()
+String getActualSdPath()
 {
-  return String(myRTC.year) + "/" + String(myRTC.month) + "/" + String(myRTC.dayofmonth) + "/" + String(myRTC.hours) + ":" + String(myRTC.minutes) + ":" + String(myRTC.seconds);
-}
-
-String getActualSDPath()
-{
-  return "/" + String(myRTC.year) + "_" + String(myRTC.month);
-}
-
-String getActualSDFilename()
-{
-  return String(myRTC.year) + "_" + String(myRTC.month) + "_" + String(myRTC.dayofmonth) + ".csv";
+  return "/" + String(rok) + "/" + String(mesiac) + "/" + String(rok) + "_" + String(mesiac) + "_" + String(den) + ".csv";
 }
 
 void sdCardWrite()
 {
-  String dirPath = getActualSDPath();
-  String fileNamePath = dirPath + "/" + getActualSDFilename();
-  bool existsDir = SD.exists(dirPath);
-  if (!existsDir)
-  {
-    SD.mkdir(dirPath);
-  }
-  bool existsFile = SD.exists(fileNamePath);
-  File file = SD.open(fileNamePath, FILE_APPEND);
+  bool exists = SD.exists(getActualSdPath());
+  File file = SD.open(getActualSdPath(), FILE_APPEND);
   if (!file)
   {
     return;
   }
   else
   {
-    if (!existsFile)
+    if (!exists)
     {
-      file.println("cas;energiaVyrobenaCelkovo;energiaVyrobena1;energiaVyrobena2;energiaCelkovo;teplotaVonkajsia");
+      file.println("cas;energiaVyrobenaCelkovo;energiaSpotrebovana1;energiaSpotrebovana2;energiaSpotrebovanaCelkovo;teplotaVonkajsia");
     }
-    file.println(String(myRTC.hours) + ":" + String(myRTC.minutes) + String(myRTC.seconds) + ";" + String(energiaVyrobenaCelkovo) + ";" + String(energiaVyrobena1) + ";" + String(energiaVyrobena2) + ";" + String(energiaCelkovo) + ";" + String(teplotaVonkajsia));
+    file.println(String(hodiny) + ":" + String(minuty) + ";" + String(energiaVyrobenaCelkovo) + ";" + String(energiaSpotrebovana1) + ";" + String(energiaSpotrebovana2) + ";" + String(energiaSpotrebovanaCelkovo) + ";" + String(teplotaVonkajsia));
   }
   file.close();
 }
 
-void sendFirebaseDbData()
-{
-  String timestamp = getTimestamp();
-
-  // Read data
-  energiaVyrobenaCelkovo = random(0, 100);
-  energiaVyrobena1 = random(0, 100);
-  energiaVyrobena2 = random(0, 100);
-  energiaCelkovo = random(0, 100);
-
-  for (; historyCounter > 0; historyCounter--)
-  {
-    HistoryData last = historyData.pop();
-
-    String dbDataPath = espDataPath + dataPath + "/" + String(last.timestamp);
-
-    jsonDb.set("/energiaVyrobenaCelkovo", String(last.energiaVyrobenaCelkovo));
-    jsonDb.set("/energiaVyrobena1", String(last.energiaVyrobena1));
-    jsonDb.set("/energiaVyrobena2", String(last.energiaVyrobena2));
-    jsonDb.set("/energiaCelkovo", String(last.energiaCelkovo));
-    jsonDb.set("/teplotaVonkajsia", String(last.teplotaVonkajsia));
-    jsonDb.set("/timestamp", String(last.timestamp));
-
-    displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "ok" : fbdo.errorReason().c_str();
-    if (displayString != "ok")
-    {
-      historyData.push(last);
-      break;
-    }
-  }
-
-  String dbDataPath = espDataPath + dataPath + "/" + String(timestamp);
-
-  jsonDb.set("/energiaVyrobenaCelkovo", String(energiaVyrobenaCelkovo));
-  jsonDb.set("/energiaVyrobena1", String(energiaVyrobena1));
-  jsonDb.set("/energiaVyrobena2", String(energiaVyrobena2));
-  jsonDb.set("/energiaCelkovo", String(energiaCelkovo));
-  jsonDb.set("/teplotaVonkajsia", String(teplotaVonkajsia));
-  jsonDb.set("/timestamp", String(timestamp));
-
-  displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "ok" : fbdo.errorReason().c_str();
-  jsonDb.clear();
-
-  if (displayString == "ok")
-  {
-    historyCounter = 0;
-  }
-  else if (historyCounter < 10)
-  {
-    historyCounter++;
-    historyData.unshift({energiaVyrobenaCelkovo, energiaVyrobena1, energiaVyrobena2, energiaCelkovo, teplotaVonkajsia, timestamp});
-  }
-}
-
 void sendFirebaseLiveData()
 {
-  String timestamp = getTimestamp();
+  String timestamp = String(rok) + "-" + String(mesiac) + "-" + String(den) + "-" + String(hodiny) + ":" + String(minuty) + ":" + String(sekundy);
 
   // Read data
   energiaAktualna = random(0, 100);
@@ -381,20 +321,66 @@ void sendFirebaseLiveData()
   vykonCinny2 = random(0, 100);
   teplotaVonkajsia = random(0, 100);
 
-  String dbDataPath = espDataPath + actualPath;
+  // json.set((actualPath + "/energiaAktualna").c_str(), String(energiaAktualna));
+  // json.set((actualPath + "/vykonCinny1").c_str(), String(vykonCinny1));
+  // json.set((actualPath + "/vykonCinny2").c_str(), String(vykonCinny2));
+  // json.set((actualPath + "/teplotaVonkajsia").c_str(), String(teplotaVonkajsia));
+  // json.set((actualPath + "/timestamp").c_str(), timestamp);
 
-  jsonLive.set("/energiaVyrobenaCelkovo", String(energiaVyrobenaCelkovo));
-  jsonLive.set("/energiaVyrobena1", String(energiaVyrobena1));
-  jsonLive.set("/energiaVyrobena2", String(energiaVyrobena2));
-  jsonLive.set("/energiaCelkovo", String(energiaCelkovo));
-  jsonLive.set("/energiaAktualna", String(energiaAktualna));
-  jsonLive.set("/vykonCinny1", String(vykonCinny1));
-  jsonLive.set("/vykonCinny2", String(vykonCinny2));
-  jsonLive.set("/teplotaVonkajsia", String(teplotaVonkajsia));
-  jsonLive.set("/timestamp", timestamp);
+  if (timerData > timerDelayData)
+  {
+    timerData = 0;
 
-  displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath, &jsonLive) ? "ok" : fbdo.errorReason().c_str();
-  jsonDb.clear();
+    // Read data
+    energiaVyrobenaCelkovo = random(0, 100);
+    energiaSpotrebovana1 = random(0, 100);
+    energiaSpotrebovana2 = random(0, 100);
+    energiaSpotrebovanaCelkovo = random(0, 100);
+
+    // if (historyCounter)
+    // {
+    //   for (int i = 0; i < historyCounter; i++)
+    //   {
+    //     String dataTimePath = dataPath + "/" + String(timestampHistory[i]);
+
+    //     json.set((dataTimePath + "/energiaVyrobenaCelkovo").c_str(), String(energiaVyrobenaCelkovoHistory[i]));
+    //     json.set((dataTimePath + "/energiaSpotrebovana1").c_str(), String(energiaSpotrebovana1History[i]));
+    //     json.set((dataTimePath + "/energiaSpotrebovana2").c_str(), String(energiaSpotrebovana2History[i]));
+    //     json.set((dataTimePath + "/energiaSpotrebovanaCelkovo").c_str(), String(energiaSpotrebovanaCelkovoHistory[i]));
+    //     json.set((dataTimePath + "/teplotaVonkajsia").c_str(), String(teplotaVonkajsiaHistory[i]));
+    //     json.set((dataTimePath + "/timestamp").c_str(), String(timestampHistory[i]));
+    //   }
+    // }
+
+    String dataTimePath = dataPath + "/" + String(timestamp);
+
+    json.set((dataTimePath + "/energiaVyrobenaCelkovo").c_str(), String(energiaVyrobenaCelkovo));
+    json.set((dataTimePath + "/energiaSpotrebovana1").c_str(), String(energiaSpotrebovana1));
+    json.set((dataTimePath + "/energiaSpotrebovana2").c_str(), String(energiaSpotrebovana2));
+    json.set((dataTimePath + "/energiaSpotrebovanaCelkovo").c_str(), String(energiaSpotrebovanaCelkovo));
+    json.set((dataTimePath + "/teplotaVonkajsia").c_str(), String(teplotaVonkajsia));
+    json.set((dataTimePath + "/timestamp").c_str(), String(timestamp));
+
+    displayString = Firebase.RTDB.setJSON(&fbdo, espDataPath.c_str(), &json) ? "ok" : fbdo.errorReason().c_str();
+  }
+
+  // if (timerData == 0)
+  // {
+  //   if (displayString == "ok")
+  //   {
+  //     historyCounter = 0;
+  //   }
+  //   else if (historyCounter < 10)
+  //   {
+  //     historyCounter++;
+  //     energiaVyrobenaCelkovoHistory[historyCounter] = energiaVyrobenaCelkovo;
+  //     energiaSpotrebovana1History[historyCounter] = energiaSpotrebovana1;
+  //     energiaSpotrebovana2History[historyCounter] = energiaSpotrebovana2;
+  //     energiaSpotrebovanaCelkovoHistory[historyCounter] = energiaSpotrebovanaCelkovo;
+  //     teplotaVonkajsiaHistory[historyCounter] = teplotaVonkajsia;
+  //     timestampHistory[historyCounter] = timestamp;
+  //   }
+  // }
 }
 
 // ###############################  S E T U P   #############################################################
@@ -414,6 +400,12 @@ void setup()
   digitalWrite(led, false);
 
   myRTC.updateTime();
+  Mb.MBHoldingRegister[0] = au16data1[0] = rok = myRTC.year;        //
+  Mb.MBHoldingRegister[1] = au16data1[1] = mesiac = myRTC.month;    //
+  Mb.MBHoldingRegister[2] = au16data1[2] = den = myRTC.dayofmonth;  // priradenie
+  Mb.MBHoldingRegister[3] = au16data1[3] = hodiny = myRTC.hours;    // priradenie
+  Mb.MBHoldingRegister[4] = au16data1[4] = minuty = myRTC.minutes;  // priradenie
+  Mb.MBHoldingRegister[5] = au16data1[5] = sekundy = myRTC.seconds; // priradenie
   //----- spustenie OLED terminalu ---------------------
   /*  display.init();   //oled
     display.flipScreenVertically(); //orientacia textu
@@ -441,24 +433,16 @@ void setup()
 
   Ethernet.init(ETH_CS);
 
+  displayString = "Setup Firebase";
+  oled1();
+  setupFirebase();
+  displayString = "Firebase OK";
+  oled1();
+
+  // Ethernet.begin(mac, ip, myDns);
+
   // give the Ethernet shield a second to initialize:
   delay(1000);
-
-  ethernetLinkStatus = Ethernet.linkStatus();
-
-  if (ethernetLinkStatus == LinkON)
-  {
-    Ethernet.begin(mac);
-    displayString = "Setup Firebase";
-    oled1();
-    setupFirebase();
-    displayString = "Firebase OK";
-  }
-  else
-  {
-    displayString = "Not connected";
-  }
-  oled1();
 
   // if (client.connect("192.168.1.126", 9000))
   // {
@@ -475,6 +459,7 @@ void setup()
   //   displayString = "connection failed";
   // }
 
+  Mb.begin();
   //  rtc.init();
 
   // komunikacia MDBUS RTU Master-------------------------------------------------------
@@ -532,23 +517,14 @@ void setup()
 
          rtc.setDateTime(&dt);
  */
-  // initWiFi();
+  // seconds, minutes, hours, day of the week, day of the month, month, year
+  if (rok == 2000)
+  {
+    myRTC.setDS1302Time(00, 40, 10, 1, 29, 1, 2024);
+    oled1();
+  }
 
-  // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  // struct tm timeinfo;
-  // if (getLocalTime(&timeinfo))
-  // {
-  //   Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
-  //   // Set local time to RTC
-  //   myRTC.setDS1302Time(timeinfo.tm_sec, timeinfo.tm_min, timeinfo.tm_hour, timeinfo.tm_wday, timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year + 1900);
-  //   oled1();
-  // }
-  // else
-  // {
-  //   displayString = "Failed to obtain time";
-  //   oled1();
-  //   delay(2000);
-  // }
+  initWiFi();
 
   // Get device SSID
   char c_ssid[23];
@@ -558,7 +534,6 @@ void setup()
   // Update database path
   espDataPath += "/" + ssid;
 }
-
 // ###############################  S E T U P   #############################################################
 
 // ########################################################################################################################
@@ -568,35 +543,32 @@ void setup()
 
 void loop()
 {
-  Ethernet.maintain(); // pri DHCP
-
-  if (ethernetLinkStatus != Ethernet.linkStatus())
-  {
-    ESP.restart();
-  }
 
   // Ds1302::DateTime now;
   // rtc.getDateTime(&now);
 
-  if (digitalRead(SD_ok) == true)
-  {
-    casSD = 0;
-  }
+  // if (digitalRead(SD_ok) == true)
+  // {
+  //   casSD = 0;
+  // }
   if (casSD > 10000)
   {
     casSD = 0;
-    if (SD.begin(chipSelect))
-    {
-      sdCardWrite();
-      SD.end();
-    }
+    // sdCardWrite();
   }
 
+  couter++;
   //--------------------OLED----------------------
   if (casRTC >= 80)
   {
     casRTC = 0;
     myRTC.updateTime();
+    Mb.MBHoldingRegister[0] = au16data1[0] = rok = myRTC.year;        //
+    Mb.MBHoldingRegister[1] = au16data1[1] = mesiac = myRTC.month;    //
+    Mb.MBHoldingRegister[2] = au16data1[2] = den = myRTC.dayofmonth;  // priradenie
+    Mb.MBHoldingRegister[3] = au16data1[3] = hodiny = myRTC.hours;    // priradenie
+    Mb.MBHoldingRegister[4] = au16data1[4] = minuty = myRTC.minutes;  // priradenie
+    Mb.MBHoldingRegister[5] = au16data1[5] = sekundy = myRTC.seconds; // priradenie */
   }
 
   if (casOLED >= 100)
@@ -605,22 +577,10 @@ void loop()
     oled1();
   }
 
-  if (timerActualData > 5000)
+  if (timerActualData > timerDelayActualData)
   {
     timerActualData = 0;
-    if (ethernetLinkStatus == LinkON && Firebase.ready())
-    {
-      sendFirebaseLiveData();
-    }
-  }
-
-  if (timerData > 10000)
-  {
-    timerData = 0;
-    if (ethernetLinkStatus == LinkON && Firebase.ready())
-    {
-      sendFirebaseDbData();
-    }
+    sendFirebaseLiveData();
   }
 
   //---------------casovace ------------------------------------
@@ -656,54 +616,52 @@ void loop()
     cas = 0;
   }
 
+  //----  modbus tcp ---------------------------------
+  //----  modbus tcp ---------------------------------
+  Mb.Run();
   //-------  meranie tepla ---------------------------------
-  // Mb.MBHoldingRegister[0] = au16data1[2];  //  energia suma H   uinteger long
-  // Mb.MBHoldingRegister[1] = au16data1[3];  //  energia suma   L -/-
-  // Mb.MBHoldingRegister[2] = au16data1[4];  //  dT min   H       uinteger long
-  // Mb.MBHoldingRegister[3] = au16data1[5];  //  dT min   L       -/-
-  // Mb.MBHoldingRegister[4] = au16data1[12]; // energia   H    uinteger long
-  // Mb.MBHoldingRegister[5] = au16data1[13]; // energia   L       -/-
-  // Mb.MBHoldingRegister[6] = au16data1[14]; // teplota vstupna H   0.01C   integer long
-  // Mb.MBHoldingRegister[7] = au16data1[15]; // teplota vstupna L   -/-
-  // Mb.MBHoldingRegister[8] = au16data1[16]; // teplota vystupna H  0,01C   integer lon
-  // Mb.MBHoldingRegister[9] = au16data1[17]; // teplota vystupna L  -/-
-  // //-------  meranie vykonu 1 ---------------------------------
-  // Mb.MBHoldingRegister[10] = au16data2[0]; //  cinny vykon H    float  .001
-  // Mb.MBHoldingRegister[11] = au16data2[1]; //  cinny vykon L     -/-
-  // Mb.MBHoldingRegister[12] = au16data2[2]; // cinna vyrobena energia H  float .01
-  // Mb.MBHoldingRegister[13] = au16data2[3]; // cinna  vyrobena energie L float
-  // //-------  meranie vykonu 2 ---------------------------------
-  // Mb.MBHoldingRegister[14] = au16data3[0]; //  cinny vykon H    float .001
-  // Mb.MBHoldingRegister[15] = au16data3[1]; //  cinny vykon L     -/-
-  // Mb.MBHoldingRegister[16] = au16data3[2]; //  vyrobena energia H  float .01
-  // Mb.MBHoldingRegister[17] = au16data3[3]; //  vyrobena energie L -/-
-  // //-------  meranie vonkajsej teploty ---------------------------------
-  // Mb.MBHoldingRegister[18] = au16data4[0]; //  teplota vonkasia int  0,1C
-  // Mb.MBHoldingRegister[19] = au16data4[1]; //  teplota vonkasia int  0,1C
+  // Mb.MBHoldingRegister[0]=au16data1[2];  //  energia suma H   uinteger long
+  // Mb.MBHoldingRegister[1]=au16data1[3];  //  energia suma   L -/-
+  // Mb.MBHoldingRegister[2]=au16data1[4];  //  dT min   H       uinteger long
+  // Mb.MBHoldingRegister[3]=au16data1[5];  //  dT min   L       -/-
+  // Mb.MBHoldingRegister[4]=au16data1[12]; // energia   H    uinteger long
+  // Mb.MBHoldingRegister[5]=au16data1[13]; // energia   L       -/-
+  Mb.MBHoldingRegister[6] = au16data1[14]; // teplota vstupna H   0.01C   integer long
+  Mb.MBHoldingRegister[7] = au16data1[15]; // teplota vstupna L   -/-
+  Mb.MBHoldingRegister[8] = au16data1[16]; // teplota vystupna H  0,01C   integer lon
+  Mb.MBHoldingRegister[9] = au16data1[17]; // teplota vystupna L  -/-
+                                           //-------  meranie vykonu 1 ---------------------------------
+  Mb.MBHoldingRegister[10] = au16data2[0]; //  cinny vykon H    float  .001
+  Mb.MBHoldingRegister[11] = au16data2[1]; //  cinny vykon L     -/-
+  Mb.MBHoldingRegister[12] = au16data2[2]; // cinna vyrobena energia H  float .01
+  Mb.MBHoldingRegister[13] = au16data2[3]; // cinna  vyrobena energie L float
+                                           //-------  meranie vykonu 2 ---------------------------------
+  Mb.MBHoldingRegister[14] = au16data3[0]; //  cinny vykon H    float .001
+  Mb.MBHoldingRegister[15] = au16data3[1]; //  cinny vykon L     -/-
+  Mb.MBHoldingRegister[16] = au16data3[2]; //  vyrobena energia H  float .01
+  Mb.MBHoldingRegister[17] = au16data3[3]; //  vyrobena energie L -/-
+  //-------  meranie vonkajsej teploty ---------------------------------
+  Mb.MBHoldingRegister[18] = au16data4[0]; //  teplota vonkasia int  0,1C
+  Mb.MBHoldingRegister[19] = au16data4[1]; //  teplota vonkasia int  0,1C
   //----------------------------------------------------------------------
 
+  /*
+   Mb.MBHoldingRegister[0]=au16data1[0]=rok=now.year;   //
+   Mb.MBHoldingRegister[1]=au16data1[1]=mesiac=now.month;  //
+   Mb.MBHoldingRegister[2]=au16data1[2]=den=now.day; //priradenie
+   Mb.MBHoldingRegister[3]=au16data1[3]=hodiny=now.hour; //priradenie
+   Mb.MBHoldingRegister[4]=au16data1[4]=minuty=now.minute; //priradenie
+   Mb.MBHoldingRegister[5]=au16data1[5]=sekundy=now.second; //priradenie
+   */
+
   // prepocty
-  uint32_t hodnotaI32;
-  hodnotaI32 = (au16data2[0] << 16 | au16data2[1]);
-  vykonCinny1 = *(float *)&hodnotaI32 * 1000;
+  vykonI32 = (au16data2[0] << 16 | au16data2[1]);
+  vykonR = *(float *)&vykonI32 * 1000;
+  vykonI16 = vykonR;
 
-  hodnotaI32 = (au16data2[2] << 16 | au16data2[3]);
-  energiaVyrobena1 = *(float *)&hodnotaI32 * 100;
-
-  hodnotaI32 = (au16data3[0] << 16 | au16data3[1]);
-  vykonCinny2 = *(float *)&hodnotaI32 * 1000;
-
-  hodnotaI32 = (au16data3[2] << 16 | au16data3[3]);
-  energiaVyrobena2 = *(float *)&hodnotaI32 * 100;
-
-  energiaCelkovo = (au16data1[2] << 16 | au16data1[3]);
-
-  energiaAktualna = (au16data1[12] << 16 | au16data1[13]);
-
-  energiaVyrobenaCelkovo = energiaVyrobena1 + energiaVyrobena2;
-
-  hodnotaI32 = (au16data4[0] << 16 | au16data4[1]);
-  teplotaVonkajsia = *(float *)&hodnotaI32 * 10;
+  energiaI32 = (au16data2[2] << 16 | au16data2[3]);
+  energiaR = *(float *)&energiaI32 * 100;
+  energiaI16 = energiaR;
 
   //--------------------------------  MODBUS RTU KOMUNIKACIA -----------------------------------------------------------------------------
   switch (u8state)
