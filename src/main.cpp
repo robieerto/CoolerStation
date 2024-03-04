@@ -1,26 +1,18 @@
 
 
-/**
+/*
   Modul ID ESP32
   MODBUS RTU NA MODBUS ETHERNET
   RS485
-  pozor pri ulozeni do ineho adresara prekopirovat aj adresar utility
  */
 
-#ifdef __INTELLISENSE__
-#pragma diag_suppress 350
-#endif
-
 #include <Arduino.h>
-// #include <Ethernet.h>
-#include "EthernetENC.h"
+#include <EthernetENC.h>
+#include <EthernetUdp.h>
 #include "esp_system.h"
-#include "ModbusRtu.h" //komunikacia modbus slave
+#include "ModbusRtu.h" // komunikacia modbus slave
 #include <SPI.h>
 #include <SD.h>
-// #include <Ds1302.h>
-// #include <SSD1306.h>
-// SSD1306  display(0x3c, 21, 22);    //SDA SCL
 
 #include <virtuabotixRTC.h>
 
@@ -34,6 +26,10 @@
 #include "addons/TokenHelper.h"
 // Provide the RTDB payload printing info and other helper functions.
 #include "addons/RTDBHelper.h"
+
+#ifdef __INTELLISENSE__
+#pragma diag_suppress 350
+#endif
 
 // Insert your network credentials
 #define WIFI_SSID "Robom"
@@ -81,7 +77,7 @@ unsigned long timerActualData = 0;
 unsigned long timerData = 0;
 
 // Real-time data
-uint32_t energiaAktualna;
+int32_t energiaAktualna;
 float vykonCinny1;
 float vykonCinny2;
 float teplotaVonkajsia;
@@ -90,7 +86,7 @@ float teplotaVonkajsia;
 float energiaVyrobena1;
 float energiaVyrobena2;
 float energiaVyrobenaCelkovo;
-uint32_t energiaCelkovo;
+int32_t energiaCelkovo;
 
 // History data
 typedef struct HistoryData
@@ -98,7 +94,7 @@ typedef struct HistoryData
   float energiaVyrobena1;
   float energiaVyrobena2;
   float energiaVyrobenaCelkovo;
-  uint32_t energiaCelkovo;
+  int32_t energiaCelkovo;
   float teplotaVonkajsia;
   String timestamp;
 } HistoryData;
@@ -187,6 +183,7 @@ String displayString = "WAITING";
 // with the IP address and port of the server
 // that you want to connect to (port 80 is default for HTTP):
 EthernetClient client;
+EthernetClient testClient;
 
 // Initialize WiFi
 void initWiFi()
@@ -224,8 +221,26 @@ void oled1()
   display.print(String(myRTC.hours) + ":" + String(myRTC.minutes) + ":" + String(myRTC.seconds));
   display.setTextSize(1);
   display.setCursor(10, 55);
-  display.print("casSD= " + String(casSD));
+  display.print("teplota= " + String(teplotaVonkajsia));
   display.display();
+}
+
+// Check internet connection
+void checkInternetConnection()
+{
+  displayString = "Checking connection";
+  oled1();
+  testClient.connect("www.google.com", 80);
+  for (int i = 0; i < 5; i++)
+  {
+    if (testClient.connected())
+    {
+      connected = true;
+      // testClient.stop();
+      break;
+    }
+    delay(100);
+  }
 }
 
 void setupFirebase()
@@ -258,18 +273,19 @@ void setupFirebase()
   // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
   fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
 
-  displayString = "Firebase begin";
+  displayString = "Firebase setup";
   oled1();
 
   // Initialize the library with the Firebase authen and config
   Firebase.begin(&config, &auth);
 
-  while ((auth.token.uid) == "")
-  {
-    displayString = "UID waiting";
-    oled1();
-    delay(1000);
-  }
+  // while ((auth.token.uid) == "")
+  // {
+  //   displayString = "UID waiting";
+  //   oled1();
+  //   delay(1000);
+  // }
+
   // Print user UID
   uid = auth.token.uid.c_str();
   displayString = "UID: " + uid;
@@ -322,10 +338,10 @@ void sendFirebaseDbData()
   String timestamp = getTimestamp();
 
   // Read data
-  energiaVyrobenaCelkovo = random(0, 100);
-  energiaVyrobena1 = random(0, 100);
-  energiaVyrobena2 = random(0, 100);
-  energiaCelkovo = random(0, 100);
+  // energiaVyrobenaCelkovo = random(0, 100);
+  // energiaVyrobena1 = random(0, 100);
+  // energiaVyrobena2 = random(0, 100);
+  // energiaCelkovo = random(0, 100);
 
   for (; historyCounter > 0; historyCounter--)
   {
@@ -376,10 +392,14 @@ void sendFirebaseLiveData()
   String timestamp = getTimestamp();
 
   // Read data
-  energiaAktualna = random(0, 100);
-  vykonCinny1 = random(0, 100);
-  vykonCinny2 = random(0, 100);
-  teplotaVonkajsia = random(0, 100);
+  // energiaVyrobenaCelkovo = random(0, 100);
+  // energiaVyrobena1 = random(0, 100);
+  // energiaVyrobena2 = random(0, 100);
+  // energiaCelkovo = random(0, 100);
+  // energiaAktualna = random(0, 100);
+  // vykonCinny1 = random(0, 100);
+  // vykonCinny2 = random(0, 100);
+  // teplotaVonkajsia = random(0, 100);
 
   String dbDataPath = espDataPath + actualPath;
 
@@ -395,6 +415,8 @@ void sendFirebaseLiveData()
 
   displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath, &jsonLive) ? "ok" : fbdo.errorReason().c_str();
   jsonDb.clear();
+
+  connected = displayString == "ok";
 }
 
 // ###############################  S E T U P   #############################################################
@@ -445,14 +467,21 @@ void setup()
   delay(1000);
 
   ethernetLinkStatus = Ethernet.linkStatus();
-
   if (ethernetLinkStatus == LinkON)
   {
     Ethernet.begin(mac);
-    displayString = "Setup Firebase";
-    oled1();
-    setupFirebase();
-    displayString = "Firebase OK";
+    delay(100);
+    connected = true;
+    // checkInternetConnection();
+    if (connected == true)
+    {
+      setupFirebase();
+      displayString = "Firebase OK";
+    }
+    else
+    {
+      displayString = "Not connected";
+    }
   }
   else
   {
@@ -480,7 +509,7 @@ void setup()
   // komunikacia MDBUS RTU Master-------------------------------------------------------
   //    telegram 0: merenie vyrobeneho tepla -------------------------------------------
   telegram[0].u8id = 1;            // slave address   meranie tepla
-  telegram[0].u8fct = 16;          // function code
+  telegram[0].u8fct = 3;           // function code
   telegram[0].u16RegAdd = 0;       // start address in slave    bateria
   telegram[0].u16CoilsNo = 20;     // number of elements (coils or registers) to read
   telegram[0].au16reg = au16data1; // pointer to a memory array in the Arduino
@@ -568,15 +597,45 @@ void setup()
 
 void loop()
 {
+  // Ds1302::DateTime now;
+  // rtc.getDateTime(&now);
+
   Ethernet.maintain(); // pri DHCP
 
-  if (ethernetLinkStatus != Ethernet.linkStatus())
+  if (ethernetLinkStatus != Ethernet.linkStatus() || (myRTC.dayofmonth == 0))
   {
+    displayString = "Restarting" + String(Ethernet.linkStatus());
+    delay(3000);
     ESP.restart();
   }
 
-  // Ds1302::DateTime now;
-  // rtc.getDateTime(&now);
+  if (connected == true)
+  {
+    casETH = 0;
+  }
+  if (casETH > 30000)
+  {
+    casETH = 0;
+    digitalWrite(reset_eth, false);
+    delay(100);
+    digitalWrite(reset_eth, true);
+    delay(100);
+    ethernetLinkStatus = Ethernet.linkStatus();
+    if (ethernetLinkStatus == LinkON)
+    {
+      Ethernet.begin(mac);
+      delay(100);
+      connected = true;
+      // checkInternetConnection();
+      if (connected == true)
+      {
+        displayString = "Setup Firebase";
+        oled1();
+        setupFirebase();
+        displayString = "Firebase OK";
+      }
+    }
+  }
 
   if (digitalRead(SD_ok) == true)
   {
@@ -665,7 +724,7 @@ void loop()
   // Mb.MBHoldingRegister[5] = au16data1[13]; // energia   L       -/-
   // Mb.MBHoldingRegister[6] = au16data1[14]; // teplota vstupna H   0.01C   integer long
   // Mb.MBHoldingRegister[7] = au16data1[15]; // teplota vstupna L   -/-
-  // Mb.MBHoldingRegister[8] = au16data1[16]; // teplota vystupna H  0,01C   integer lon
+  // Mb.MBHoldingRegister[8] = au16data1[16]; // teplota vystupna H  0,01C   integer long
   // Mb.MBHoldingRegister[9] = au16data1[17]; // teplota vystupna L  -/-
   // //-------  meranie vykonu 1 ---------------------------------
   // Mb.MBHoldingRegister[10] = au16data2[0]; //  cinny vykon H    float  .001
@@ -696,14 +755,15 @@ void loop()
   hodnotaI32 = (au16data3[2] << 16 | au16data3[3]);
   energiaVyrobena2 = *(float *)&hodnotaI32 * 100;
 
-  energiaCelkovo = (au16data1[2] << 16 | au16data1[3]);
+  // energiaCelkovo = (au16data1[2] << 16 | au16data1[3]);
+  energiaCelkovo = (au16data1[14] << 16 | au16data1[15]);
 
-  energiaAktualna = (au16data1[12] << 16 | au16data1[13]);
+  // energiaAktualna = (au16data1[12] << 16 | au16data1[13]);
+  energiaAktualna = (au16data1[16] << 16 | au16data1[17]);
 
   energiaVyrobenaCelkovo = energiaVyrobena1 + energiaVyrobena2;
 
-  hodnotaI32 = (au16data4[0] << 16 | au16data4[1]);
-  teplotaVonkajsia = *(float *)&hodnotaI32 * 10;
+  teplotaVonkajsia = au16data4[0] * 0.1;
 
   //--------------------------------  MODBUS RTU KOMUNIKACIA -----------------------------------------------------------------------------
   switch (u8state)
