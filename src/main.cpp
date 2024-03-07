@@ -9,6 +9,7 @@
 #include <Arduino.h>
 #include <EthernetENC.h>
 #include <EthernetUdp.h>
+#include <NTPClient.h>
 #include "esp_system.h"
 #include "ModbusRtu.h" // komunikacia modbus slave
 #include <SPI.h>
@@ -32,8 +33,8 @@
 #endif
 
 // Insert your network credentials
-#define WIFI_SSID "Robom"
-#define WIFI_PASSWORD "starbucksCOFFEE100"
+#define WIFI_SSID "wifi_ssid"
+#define WIFI_PASSWORD "password"
 
 // Insert Firebase project API Key
 #define API_KEY "AIzaSyCIQN38pHQlcLp0_ujse-owqncyLZIHTLk"
@@ -75,6 +76,8 @@ const int daylightOffset_sec = 3600;
 // Define millis timer
 unsigned long timerActualData = 0;
 unsigned long timerData = 0;
+unsigned long TIME_ACTUAL_DATA = 5000;
+unsigned long TIME_DATA = 60000 * 15; // 15 minutes
 
 // Real-time data
 int32_t energiaAktualna;
@@ -87,6 +90,8 @@ float energiaVyrobena1;
 float energiaVyrobena2;
 float energiaVyrobenaCelkovo;
 int32_t energiaCelkovo;
+float teplotaVstupna;
+float teplotaVystupna;
 
 // History data
 typedef struct HistoryData
@@ -161,6 +166,8 @@ int32_t prirastok;
 // ##########################################################################
 
 bool connected;
+bool cableConnected;
+
 /* Ethernet */
 // Enter a MAC address for your controller below.
 // Newer Ethernet shields have a MAC address printed on a sticker on the shield
@@ -177,69 +184,162 @@ IPAddress gatewayIP(192, 168, 1, 1);  // Change to your network gateway
 IPAddress subnetIP(255, 255, 255, 0); // Change to your network subnet
 Firebase_StaticIP staIP(staticIP, subnetIP, gatewayIP, gatewayIP, true);
 
+// A UDP instance to let us send and receive packets over UDP
+EthernetUDP ntpUDP;
+
+NTPClient timeClient(ntpUDP, 3600);
+
+#define LEAP_YEAR(Y) ((Y > 0) && !(Y % 4) && ((Y % 100) || !(Y % 400)))
+
 String displayString = "WAITING";
 
 // Initialize the Ethernet client library
 // with the IP address and port of the server
 // that you want to connect to (port 80 is default for HTTP):
 EthernetClient client;
-EthernetClient testClient;
+
+String secondsStr;
+String minutesStr;
+String hoursStr;
+String dayStr;
+String monthStr;
+String yearStr;
+
+int obrazovka;
+bool tlacitko;
 
 // Initialize WiFi
-void initWiFi()
+// void initWiFi()
+// {
+//   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+//   while (WiFi.status() != WL_CONNECTED)
+//   {
+//     Serial.print(".");
+//     delay(300);
+//   }
+//   displayString = "IP " + WiFi.localIP().toString();
+// }
+
+String toStrDate(int date)
 {
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    Serial.print(".");
-    delay(300);
-  }
-  displayString = "IP " + WiFi.localIP().toString();
+  return (date < 10 ? "0" : "") + String(date);
 }
 
-//--------------------------  O L E D   ----------------------------------------------------------------------------
+String getTimestamp()
+{
+  hoursStr = toStrDate(myRTC.hours);
+  minutesStr = toStrDate(myRTC.minutes);
+  secondsStr = toStrDate(myRTC.seconds);
+  return hoursStr + ":" + minutesStr + ":" + secondsStr;
+}
+
+String getDateTimestamp()
+{
+  yearStr = String(myRTC.year);
+  monthStr = toStrDate(myRTC.month);
+  dayStr = toStrDate(myRTC.dayofmonth);
+  return yearStr + "/" + monthStr + "/" + dayStr + "/" + getTimestamp();
+}
+
+String getActualSDPath()
+{
+  yearStr = String(myRTC.year);
+  monthStr = toStrDate(myRTC.month);
+  return "/" + yearStr + "_" + monthStr;
+}
+
+String getActualSDFilename()
+{
+  yearStr = String(myRTC.year);
+  monthStr = toStrDate(myRTC.month);
+  dayStr = toStrDate(myRTC.dayofmonth);
+  return yearStr + "_" + monthStr + "_" + dayStr + ".csv";
+}
+
+// OLED
 void oled1()
 {
-  /*  display.clear();
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.setFont(ArialMT_Plain_16);
-    display.drawString(10, 0, "skuska"+String(cas));
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.setFont(ArialMT_Plain_10);              //velkost textu
-    display.drawString(0, 20, " millis: "+ String(millis()));
- // display.drawString(0, 31, "Vykon2: "+ String(Vykon2,1)+ " W" + "  r2:" + String(regVYKON2)+"%");
-    display.drawString(0, 42, "cas:"+ String(rok)+ "/" + String(mesiac)+"/"+ String(den)+ ":" + String(hodiny)+":"+ String(minuty)+":"+ String(sekundy));
- //   display.drawString(0, 53, "Vykon:  "+ String(VykonP,1)+ " W" + "  r:" +  String(regVYKON)+ "%");
-    display.display(); */
   display.clearDisplay();
   display.setTextColor(WHITE);
   display.setTextSize(1);
   display.setCursor(0, 5);
   display.print(displayString);
-  display.setTextSize(2);
-  display.setCursor(20, 32);
-  display.print(String(myRTC.hours) + ":" + String(myRTC.minutes) + ":" + String(myRTC.seconds));
   display.setTextSize(1);
-  display.setCursor(10, 55);
-  display.print("teplota= " + String(teplotaVonkajsia));
+  if (obrazovka == 0)
+  {
+    display.setCursor(0, 16);
+    display.print("E akt: " + String(energiaAktualna));
+    display.setCursor(0, 26);
+    display.print("E celk: " + String(energiaCelkovo));
+    display.setCursor(0, 36);
+    display.print("E1+E2: " + String(energiaVyrobenaCelkovo));
+    display.setCursor(0, 46);
+    display.print("T vonk: " + String(teplotaVonkajsia));
+  }
+  else if (obrazovka == 1)
+  {
+    display.setCursor(0, 16);
+    display.print("E 1: " + String(energiaVyrobena1));
+    display.setCursor(0, 26);
+    display.print("E 2: " + String(energiaVyrobena2));
+    display.setCursor(0, 36);
+    display.print("V 1: " + String(vykonCinny1));
+    display.setCursor(0, 46);
+    display.print("V 2: " + String(vykonCinny2));
+  }
+  else if (obrazovka == 2)
+  {
+    display.setCursor(0, 16);
+    display.print("T vstup: " + String(teplotaVstupna));
+    display.setCursor(0, 26);
+    display.print("T vystup: " + String(teplotaVystupna));
+  }
+  display.setCursor(0, 56);
+  display.print("----- " + getTimestamp() + " -----");
   display.display();
 }
 
-// Check internet connection
-void checkInternetConnection()
+void getDateTime()
 {
-  displayString = "Checking connection";
-  oled1();
-  testClient.connect("www.google.com", 80);
-  for (int i = 0; i < 5; i++)
+  unsigned long epoch = timeClient.getEpochTime();
+  unsigned long rawTime = epoch / 86400L; // in days
+  unsigned long days = 0, year = 1970;
+  uint8_t month, hours, minutes, seconds;
+  static const uint8_t monthDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+
+  while ((days += (LEAP_YEAR(year) ? 366 : 365)) <= rawTime)
+    year++;
+  rawTime -= days - (LEAP_YEAR(year) ? 366 : 365); // now it is days in this year, starting at 0
+  days = 0;
+  for (month = 0; month < 12; month++)
   {
-    if (testClient.connected())
-    {
-      connected = true;
-      // testClient.stop();
-      break;
+    uint8_t monthLength;
+    if (month == 1)
+    { // february
+      monthLength = LEAP_YEAR(year) ? 29 : 28;
     }
-    delay(100);
+    else
+    {
+      monthLength = monthDays[month];
+    }
+    if (rawTime < monthLength)
+      break;
+    rawTime -= monthLength;
+  }
+  hours = timeClient.getHours();
+  minutes = timeClient.getMinutes();
+  seconds = timeClient.getSeconds();
+
+  yearStr = String(year);
+  monthStr = (++month < 10 ? "0" : "") + String(month);   // jan is month 1
+  dayStr = (++rawTime < 10 ? "0" : "") + String(rawTime); // day of month
+  hoursStr = (hours < 10 ? "0" : "") + String(hours);
+  minutesStr = (minutes < 10 ? "0" : "") + String(minutes);
+  secondsStr = (seconds < 10 ? "0" : "") + String(seconds);
+
+  if (year > 1970)
+  {
+    myRTC.setDS1302Time(seconds, minutes, hours, 0, rawTime, month, year);
   }
 }
 
@@ -247,6 +347,9 @@ void setupFirebase()
 {
   if (firebaseConfigReady)
     return;
+
+  displayString = "Firebase setup";
+  oled1();
 
   firebaseConfigReady = true;
 
@@ -273,9 +376,6 @@ void setupFirebase()
   // Large data transmission may require larger RX buffer, otherwise connection issue or data read time out can be occurred.
   fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
 
-  displayString = "Firebase setup";
-  oled1();
-
   // Initialize the library with the Firebase authen and config
   Firebase.begin(&config, &auth);
 
@@ -285,26 +385,10 @@ void setupFirebase()
   //   oled1();
   //   delay(1000);
   // }
+  // uid = auth.token.uid.c_str();
 
-  // Print user UID
-  uid = auth.token.uid.c_str();
-  displayString = "UID: " + uid;
+  displayString = "Firebase OK";
   oled1();
-}
-
-String getTimestamp()
-{
-  return String(myRTC.year) + "/" + String(myRTC.month) + "/" + String(myRTC.dayofmonth) + "/" + String(myRTC.hours) + ":" + String(myRTC.minutes) + ":" + String(myRTC.seconds);
-}
-
-String getActualSDPath()
-{
-  return "/" + String(myRTC.year) + "_" + String(myRTC.month);
-}
-
-String getActualSDFilename()
-{
-  return String(myRTC.year) + "_" + String(myRTC.month) + "_" + String(myRTC.dayofmonth) + ".csv";
 }
 
 void sdCardWrite()
@@ -328,20 +412,14 @@ void sdCardWrite()
     {
       file.println("cas;energiaVyrobenaCelkovo;energiaVyrobena1;energiaVyrobena2;energiaCelkovo;teplotaVonkajsia");
     }
-    file.println(String(myRTC.hours) + ":" + String(myRTC.minutes) + String(myRTC.seconds) + ";" + String(energiaVyrobenaCelkovo) + ";" + String(energiaVyrobena1) + ";" + String(energiaVyrobena2) + ";" + String(energiaCelkovo) + ";" + String(teplotaVonkajsia));
+    file.println(getTimestamp() + ";" + String(energiaVyrobenaCelkovo) + ";" + String(energiaVyrobena1) + ";" + String(energiaVyrobena2) + ";" + String(energiaCelkovo) + ";" + String(teplotaVonkajsia));
   }
   file.close();
 }
 
 void sendFirebaseDbData()
 {
-  String timestamp = getTimestamp();
-
-  // Read data
-  // energiaVyrobenaCelkovo = random(0, 100);
-  // energiaVyrobena1 = random(0, 100);
-  // energiaVyrobena2 = random(0, 100);
-  // energiaCelkovo = random(0, 100);
+  String timestamp = getDateTimestamp();
 
   for (; historyCounter > 0; historyCounter--)
   {
@@ -356,8 +434,8 @@ void sendFirebaseDbData()
     jsonDb.set("/teplotaVonkajsia", String(last.teplotaVonkajsia));
     jsonDb.set("/timestamp", String(last.timestamp));
 
-    displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "ok" : fbdo.errorReason().c_str();
-    if (displayString != "ok")
+    displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
+    if (displayString != "OK")
     {
       historyData.push(last);
       break;
@@ -373,10 +451,10 @@ void sendFirebaseDbData()
   jsonDb.set("/teplotaVonkajsia", String(teplotaVonkajsia));
   jsonDb.set("/timestamp", String(timestamp));
 
-  displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "ok" : fbdo.errorReason().c_str();
+  displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
   jsonDb.clear();
 
-  if (displayString == "ok")
+  if (displayString == "OK")
   {
     historyCounter = 0;
   }
@@ -389,17 +467,7 @@ void sendFirebaseDbData()
 
 void sendFirebaseLiveData()
 {
-  String timestamp = getTimestamp();
-
-  // Read data
-  // energiaVyrobenaCelkovo = random(0, 100);
-  // energiaVyrobena1 = random(0, 100);
-  // energiaVyrobena2 = random(0, 100);
-  // energiaCelkovo = random(0, 100);
-  // energiaAktualna = random(0, 100);
-  // vykonCinny1 = random(0, 100);
-  // vykonCinny2 = random(0, 100);
-  // teplotaVonkajsia = random(0, 100);
+  String timestamp = getDateTimestamp();
 
   String dbDataPath = espDataPath + actualPath;
 
@@ -411,12 +479,50 @@ void sendFirebaseLiveData()
   jsonLive.set("/vykonCinny1", String(vykonCinny1));
   jsonLive.set("/vykonCinny2", String(vykonCinny2));
   jsonLive.set("/teplotaVonkajsia", String(teplotaVonkajsia));
+  jsonLive.set("/teplotaVstupna", String(teplotaVstupna));
+  jsonLive.set("/teplotaVystupna", String(teplotaVystupna));
   jsonLive.set("/timestamp", timestamp);
 
-  displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath, &jsonLive) ? "ok" : fbdo.errorReason().c_str();
+  bool firstSend = displayString != "OK";
+  displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath, &jsonLive) ? "OK" : fbdo.errorReason().c_str();
   jsonDb.clear();
 
-  connected = displayString == "ok";
+  connected = displayString == "OK";
+  if (!connected && firstSend)
+  {
+    casETH = 30000;
+  }
+}
+
+void initInternetConnection()
+{
+  ethernetLinkStatus = Ethernet.linkStatus();
+  if (ethernetLinkStatus == LinkON)
+  {
+    cableConnected = true;
+    Ethernet.begin(mac);
+    delay(100);
+    timeClient.begin();
+
+    if (timeClient.update())
+    {
+      getDateTime();
+      setupFirebase();
+      connected = true;
+    }
+    else
+    {
+      displayString = "Not connected";
+      connected = false;
+    }
+  }
+  else
+  {
+    displayString = "Not connected";
+    connected = false;
+    cableConnected = false;
+  }
+  oled1();
 }
 
 // ###############################  S E T U P   #############################################################
@@ -466,29 +572,7 @@ void setup()
   // give the Ethernet shield a second to initialize:
   delay(1000);
 
-  ethernetLinkStatus = Ethernet.linkStatus();
-  if (ethernetLinkStatus == LinkON)
-  {
-    Ethernet.begin(mac);
-    delay(100);
-    connected = true;
-    // checkInternetConnection();
-    if (connected == true)
-    {
-      setupFirebase();
-      displayString = "Firebase OK";
-    }
-    else
-    {
-      displayString = "Not connected";
-    }
-  }
-  else
-  {
-    displayString = "Not connected";
-  }
-  oled1();
-
+  // initWiFi();
   // if (client.connect("192.168.1.126", 9000))
   // {
   //   displayString = "Connected to " + String(client.remoteIP());
@@ -503,8 +587,6 @@ void setup()
   //   // if you didn't get a connection to the server:
   //   displayString = "connection failed";
   // }
-
-  //  rtc.init();
 
   // komunikacia MDBUS RTU Master-------------------------------------------------------
   //    telegram 0: merenie vyrobeneho tepla -------------------------------------------
@@ -548,36 +630,8 @@ void setup()
   master.setTimeOut(400);
   u32wait = millis() + 300;
   u8state = 0;
-  // nastavenie raalneho casu
-  /*  Ds1302::DateTime dt = {
-             .year = 24,
-             .month = 1,
-             .day = 23,
-             .hour =17,
-             .minute = 28,
-             .second = 0,
-             .dow = 2
-         };
 
-         rtc.setDateTime(&dt);
- */
-  // initWiFi();
-
-  // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  // struct tm timeinfo;
-  // if (getLocalTime(&timeinfo))
-  // {
-  //   Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
-  //   // Set local time to RTC
-  //   myRTC.setDS1302Time(timeinfo.tm_sec, timeinfo.tm_min, timeinfo.tm_hour, timeinfo.tm_wday, timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year + 1900);
-  //   oled1();
-  // }
-  // else
-  // {
-  //   displayString = "Failed to obtain time";
-  //   oled1();
-  //   delay(2000);
-  // }
+  initInternetConnection();
 
   // Get device SSID
   char c_ssid[23];
@@ -588,8 +642,6 @@ void setup()
   espDataPath += "/" + ssid;
 }
 
-// ###############################  S E T U P   #############################################################
-
 // ########################################################################################################################
 //----------------------------------------------------------------------------------------------------------------------------
 //--------------------------------------H L A V N A     S L U C K A ----------------------------------------------------------
@@ -598,7 +650,7 @@ void setup()
 void loop()
 {
   // Ds1302::DateTime now;
-  // rtc.getDateTime(&now);
+  // rtc.getDateTimeTime(&now);
 
   Ethernet.maintain(); // pri DHCP
 
@@ -609,7 +661,7 @@ void loop()
     ESP.restart();
   }
 
-  if (connected == true)
+  if (connected == true || (connected == false && cableConnected == true))
   {
     casETH = 0;
   }
@@ -620,28 +672,14 @@ void loop()
     delay(100);
     digitalWrite(reset_eth, true);
     delay(100);
-    ethernetLinkStatus = Ethernet.linkStatus();
-    if (ethernetLinkStatus == LinkON)
-    {
-      Ethernet.begin(mac);
-      delay(100);
-      connected = true;
-      // checkInternetConnection();
-      if (connected == true)
-      {
-        displayString = "Setup Firebase";
-        oled1();
-        setupFirebase();
-        displayString = "Firebase OK";
-      }
-    }
+    initInternetConnection();
   }
 
   if (digitalRead(SD_ok) == true)
   {
     casSD = 0;
   }
-  if (casSD > 10000)
+  if (casSD > 60000)
   {
     casSD = 0;
     if (SD.begin(chipSelect))
@@ -664,21 +702,52 @@ void loop()
     oled1();
   }
 
-  if (timerActualData > 5000)
+  if (timerActualData > TIME_ACTUAL_DATA)
   {
     timerActualData = 0;
-    if (ethernetLinkStatus == LinkON && Firebase.ready())
+    // if (timeClient.update())
+    // {
+    //   // getDateTime();
+    //   connected = true;
+    // }
+    // else
+    // {
+    //   connected = false;
+    // }
+    if (connected)
     {
-      sendFirebaseLiveData();
+      if (!firebaseConfigReady)
+      {
+        setupFirebase();
+      }
+      if (Firebase.ready())
+      {
+        sendFirebaseLiveData();
+      }
+    }
+    else
+    {
+      if (Ethernet.linkStatus() == LinkON && timeClient.update())
+      {
+        setupFirebase();
+        connected = true;
+      }
     }
   }
 
-  if (timerData > 10000)
+  if (timerData > TIME_DATA)
   {
     timerData = 0;
-    if (ethernetLinkStatus == LinkON && Firebase.ready())
+    if (connected)
     {
-      sendFirebaseDbData();
+      if (!firebaseConfigReady)
+      {
+        setupFirebase();
+      }
+      if (Firebase.ready())
+      {
+        sendFirebaseDbData();
+      }
     }
   }
 
@@ -755,11 +824,11 @@ void loop()
   hodnotaI32 = (au16data3[2] << 16 | au16data3[3]);
   energiaVyrobena2 = *(float *)&hodnotaI32 * 100;
 
-  // energiaCelkovo = (au16data1[2] << 16 | au16data1[3]);
-  energiaCelkovo = (au16data1[14] << 16 | au16data1[15]);
+  energiaCelkovo = (au16data1[2] << 16 | au16data1[3]);
+  energiaAktualna = (au16data1[12] << 16 | au16data1[13]);
 
-  // energiaAktualna = (au16data1[12] << 16 | au16data1[13]);
-  energiaAktualna = (au16data1[16] << 16 | au16data1[17]);
+  teplotaVstupna = (au16data1[14] << 16 | au16data1[15]) * 0.01;
+  teplotaVystupna = (au16data1[16] << 16 | au16data1[17]) * 0.01;
 
   energiaVyrobenaCelkovo = energiaVyrobena1 + energiaVyrobena2;
 
@@ -811,5 +880,18 @@ void loop()
     vyp = LOW;
     digitalWrite(4, LOW);
   }
-  //--------------------------------------------------------------------------------------------------------------------
+
+  // tlacitko
+  if (digitalRead(TL) == LOW)
+  {
+    tlacitko = true;
+  }
+  else
+  {
+    if (tlacitko)
+    {
+      tlacitko = false;
+      obrazovka = ++obrazovka % 3;
+    }
+  }
 }
