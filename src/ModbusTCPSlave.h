@@ -22,22 +22,18 @@
 #ifndef ModbusTCPSlave_h
 #define ModbusTCPSlave_h
 
-#define MB_PORT 502  
-
+#define MB_PORT 502
 
 #define MB_ESP32
 
-
-
 #include "Arduino.h"
-
 
 #ifdef MB_ESP32
 #include <EthernetENC.h>
 #endif
 
-#define maxInputRegister      30
-#define maxHoldingRegister    30
+#define maxInputRegister 30
+#define maxHoldingRegister 30
 //
 // MODBUS Function Codes
 //
@@ -62,13 +58,13 @@
 //
 // MODBUS MBAP offsets
 //
-#define MB_TCP_TID          0
-#define MB_TCP_PID          2
-#define MB_TCP_LEN          4
-#define MB_TCP_UID          6
-#define MB_TCP_FUNC         7
-#define MB_TCP_REGISTER_START         8
-#define MB_TCP_REGISTER_NUMBER         10
+#define MB_TCP_TID 0
+#define MB_TCP_PID 2
+#define MB_TCP_LEN 4
+#define MB_TCP_UID 6
+#define MB_TCP_FUNC 7
+#define MB_TCP_REGISTER_START 8
+#define MB_TCP_REGISTER_NUMBER 10
 
 class ModbusTCPSlave
 {
@@ -76,21 +72,19 @@ public:
   ModbusTCPSlave(void);
 
 #ifdef MB_ESP32
-    void begin();
-    #endif
-    void Run();
+  void begin();
+#endif
+  void Run();
   void Stop();
-    unsigned int  MBInputRegister[maxInputRegister];
-    unsigned int  MBHoldingRegister[maxHoldingRegister];
+  unsigned int MBInputRegister[maxInputRegister];
+  unsigned int MBHoldingRegister[maxHoldingRegister];
 
-private: 
-    byte ByteArray[260];
-    bool ledPinStatus = LOW;
-    
+private:
+  byte ByteArray[260];
+  bool ledPinStatus = LOW;
 
-    
 #ifdef MB_ESP32
-    EthernetServer server;
+  EthernetServer server;
 #endif
 };
 

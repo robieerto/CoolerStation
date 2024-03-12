@@ -535,18 +535,10 @@ void setup()
   pinMode(TL, INPUT_PULLUP);
   pinMode(SD_ok, INPUT_PULLUP);
   digitalWrite(reset_eth, true);
-
-  // start the Ethernet connection
-  digitalWrite(led, true);
-  delay(500);
   digitalWrite(led, false);
 
   myRTC.updateTime();
-  //----- spustenie OLED terminalu ---------------------
-  /*  display.init();   //oled
-    display.flipScreenVertically(); //orientacia textu
-     display.display();
-    oled1();*/
+
   display.begin(SSD1306_SWITCHCAPVCC, 0x3c); // nie 3D
   display.setRotation(0);
   display.display();
@@ -705,15 +697,6 @@ void loop()
   if (timerActualData > TIME_ACTUAL_DATA)
   {
     timerActualData = 0;
-    // if (timeClient.update())
-    // {
-    //   // getDateTime();
-    //   connected = true;
-    // }
-    // else
-    // {
-    //   connected = false;
-    // }
     if (connected)
     {
       if (!firebaseConfigReady)
@@ -834,7 +817,7 @@ void loop()
 
   teplotaVonkajsia = au16data4[0] * 0.1;
 
-  //--------------------------------  MODBUS RTU KOMUNIKACIA -----------------------------------------------------------------------------
+  //--------------------------------  MODBUS RTU KOMUNIKACIA -----------------------------------------------------------------
   switch (u8state)
   {
   case 0:
@@ -858,7 +841,7 @@ void loop()
     break;
   }
 
-  //--------------------------------------------------------------------------------------------------------------------------------------
+  //--------------------------------------------------------------------------------------------------------------------------
   // komunikacia RTU
   if (cas_com > 2000)
   {
