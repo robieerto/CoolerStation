@@ -57,6 +57,7 @@ FirebaseConfig config;
 String espDataPath = "/ESPData";
 String dataPath = "/Data";
 String actualPath = "/ActualData";
+String historyPath = "/HistoryData";
 
 // Variable to save USER UID
 String uid;
@@ -167,6 +168,7 @@ int32_t prirastok;
 
 bool connected;
 bool cableConnected;
+bool firstConnected = true;
 
 /* Ethernet */
 // Enter a MAC address for your controller below.
@@ -484,13 +486,21 @@ void sendFirebaseLiveData()
   jsonLive.set("/timestamp", timestamp);
 
   bool firstSend = displayString != "OK";
-  displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath, &jsonLive) ? "OK" : fbdo.errorReason().c_str();
+  displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonLive) ? "OK" : fbdo.errorReason().c_str();
   jsonDb.clear();
 
   connected = displayString == "OK";
   if (!connected && firstSend)
   {
     casETH = 30000;
+  }
+  if (connected && firstConnected)
+  {
+    firstConnected = false;
+    String dbDataPath = espDataPath + historyPath + "/" + String(timestamp);
+    jsonDb.set("/timestamp", String(timestamp));
+    Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb);
+    jsonDb.clear();
   }
 }
 
