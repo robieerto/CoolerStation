@@ -37,14 +37,14 @@
 #define WIFI_PASSWORD "password"
 
 // Insert Firebase project API Key
-#define API_KEY "AIzaSyCIQN38pHQlcLp0_ujse-owqncyLZIHTLk"
+#define API_KEY "AIzaSyA5TB8C1WdQoQnel--D7pe_vpnro0Vu2Bg"
 
 // Insert Authorized Email and Corresponding Password
 #define USER_EMAIL "robert.mysza@gmail.com"
 #define USER_PASSWORD "frekvencnyMENIC230."
 
 // Insert RTDB URLefine the RTDB URL */
-#define DATABASE_URL "https://coolerstation-32933-default-rtdb.europe-west1.firebasedatabase.app/"
+#define DATABASE_URL "https://coolerstation-698c0-default-rtdb.europe-west1.firebasedatabase.app/"
 
 // Define Firebase Data object
 FirebaseData fbdo;
