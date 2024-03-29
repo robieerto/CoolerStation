@@ -103,6 +103,7 @@ typedef struct HistoryData
   int32_t energiaCelkovo;
   float teplotaVonkajsia;
   String timestamp;
+  int rok, mesiac, den, hodina, minuta, sekunda;
 } HistoryData;
 CircularBuffer<HistoryData, 10> historyData;
 
@@ -240,7 +241,18 @@ String getDateTimestamp()
   yearStr = String(myRTC.year);
   monthStr = toStrDate(myRTC.month);
   dayStr = toStrDate(myRTC.dayofmonth);
-  return yearStr + "/" + monthStr + "/" + dayStr + "/" + getTimestamp();
+  return yearStr + "-" + monthStr + "-" + dayStr + " " + getTimestamp();
+}
+
+String getTimeStampRecord()
+{
+  hoursStr = toStrDate(myRTC.hours);
+  minutesStr = toStrDate(myRTC.minutes);
+  secondsStr = toStrDate(myRTC.seconds);
+  yearStr = String(myRTC.year);
+  monthStr = toStrDate(myRTC.month);
+  dayStr = toStrDate(myRTC.dayofmonth);
+  return yearStr + monthStr + dayStr + hoursStr + minutesStr + secondsStr;
 }
 
 String getActualSDPath()
@@ -427,14 +439,19 @@ void sendFirebaseDbData()
   {
     HistoryData last = historyData.pop();
 
-    String dbDataPath = espDataPath + dataPath + "/" + String(last.timestamp);
+    String lastTimeStampRecord = last.rok + toStrDate(last.mesiac) + toStrDate(last.den) + toStrDate(last.hodina) + toStrDate(last.minuta) + toStrDate(last.sekunda);
 
-    jsonDb.set("/energiaVyrobenaCelkovo", String(last.energiaVyrobenaCelkovo));
-    jsonDb.set("/energiaVyrobena1", String(last.energiaVyrobena1));
-    jsonDb.set("/energiaVyrobena2", String(last.energiaVyrobena2));
-    jsonDb.set("/energiaCelkovo", String(last.energiaCelkovo));
-    jsonDb.set("/teplotaVonkajsia", String(last.teplotaVonkajsia));
-    jsonDb.set("/timestamp", String(last.timestamp));
+    String dbDataPath = espDataPath + dataPath + "/" + lastTimeStampRecord;
+
+    jsonDb.set("/energiaVyrobenaCelkovo", last.energiaVyrobenaCelkovo);
+    jsonDb.set("/energiaVyrobena1", last.energiaVyrobena1);
+    jsonDb.set("/energiaVyrobena2", last.energiaVyrobena2);
+    jsonDb.set("/energiaCelkovo", last.energiaCelkovo);
+    jsonDb.set("/teplotaVonkajsia", last.teplotaVonkajsia);
+    jsonDb.set("/cas", last.timestamp);
+    jsonDb.set("/rok", last.rok);
+    jsonDb.set("/mesiac", last.mesiac);
+    jsonDb.set("/den", last.den);
 
     displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
     if (displayString != "OK")
@@ -444,14 +461,17 @@ void sendFirebaseDbData()
     }
   }
 
-  String dbDataPath = espDataPath + dataPath + "/" + String(timestamp);
+  String dbDataPath = espDataPath + dataPath + "/" + getTimeStampRecord();
 
-  jsonDb.set("/energiaVyrobenaCelkovo", String(energiaVyrobenaCelkovo));
-  jsonDb.set("/energiaVyrobena1", String(energiaVyrobena1));
-  jsonDb.set("/energiaVyrobena2", String(energiaVyrobena2));
-  jsonDb.set("/energiaCelkovo", String(energiaCelkovo));
-  jsonDb.set("/teplotaVonkajsia", String(teplotaVonkajsia));
-  jsonDb.set("/timestamp", String(timestamp));
+  jsonDb.set("/energiaVyrobenaCelkovo", energiaVyrobenaCelkovo);
+  jsonDb.set("/energiaVyrobena1", energiaVyrobena1);
+  jsonDb.set("/energiaVyrobena2", energiaVyrobena2);
+  jsonDb.set("/energiaCelkovo", energiaCelkovo);
+  jsonDb.set("/teplotaVonkajsia", teplotaVonkajsia);
+  jsonDb.set("/cas", timestamp);
+  jsonDb.set("/rok", myRTC.year);
+  jsonDb.set("/mesiac", myRTC.month);
+  jsonDb.set("/den", myRTC.dayofmonth);
 
   displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
   jsonDb.clear();
@@ -463,27 +483,28 @@ void sendFirebaseDbData()
   else if (historyCounter < 10)
   {
     historyCounter++;
-    historyData.unshift({energiaVyrobenaCelkovo, energiaVyrobena1, energiaVyrobena2, energiaCelkovo, teplotaVonkajsia, timestamp});
+    historyData.unshift({energiaVyrobenaCelkovo, energiaVyrobena1, energiaVyrobena2, energiaCelkovo, teplotaVonkajsia, timestamp, myRTC.year, myRTC.month, myRTC.dayofmonth});
   }
 }
 
 void sendFirebaseLiveData()
 {
   String timestamp = getDateTimestamp();
+  String timestampRecord = getTimeStampRecord();
 
   String dbDataPath = espDataPath + actualPath;
 
-  jsonLive.set("/energiaVyrobenaCelkovo", String(energiaVyrobenaCelkovo));
-  jsonLive.set("/energiaVyrobena1", String(energiaVyrobena1));
-  jsonLive.set("/energiaVyrobena2", String(energiaVyrobena2));
-  jsonLive.set("/energiaCelkovo", String(energiaCelkovo));
-  jsonLive.set("/energiaAktualna", String(energiaAktualna));
-  jsonLive.set("/vykonCinny1", String(vykonCinny1));
-  jsonLive.set("/vykonCinny2", String(vykonCinny2));
-  jsonLive.set("/teplotaVonkajsia", String(teplotaVonkajsia));
-  jsonLive.set("/teplotaVstupna", String(teplotaVstupna));
-  jsonLive.set("/teplotaVystupna", String(teplotaVystupna));
-  jsonLive.set("/timestamp", timestamp);
+  jsonLive.set("/energiaVyrobenaCelkovo", energiaVyrobenaCelkovo);
+  jsonLive.set("/energiaVyrobena1", energiaVyrobena1);
+  jsonLive.set("/energiaVyrobena2", energiaVyrobena2);
+  jsonLive.set("/energiaCelkovo", energiaCelkovo);
+  jsonLive.set("/energiaAktualna", energiaAktualna);
+  jsonLive.set("/vykonCinny1", vykonCinny1);
+  jsonLive.set("/vykonCinny2", vykonCinny2);
+  jsonLive.set("/teplotaVonkajsia", teplotaVonkajsia);
+  jsonLive.set("/teplotaVstupna", teplotaVstupna);
+  jsonLive.set("/teplotaVystupna", teplotaVystupna);
+  jsonLive.set("/cas", timestamp);
 
   bool firstSend = displayString != "OK";
   displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonLive) ? "OK" : fbdo.errorReason().c_str();
@@ -497,8 +518,8 @@ void sendFirebaseLiveData()
   if (connected && firstConnected)
   {
     firstConnected = false;
-    String dbDataPath = espDataPath + historyPath + "/" + String(timestamp);
-    jsonDb.set("/timestamp", String(timestamp));
+    String dbDataPath = espDataPath + historyPath + "/" + timestampRecord;
+    jsonDb.set("/timestamp", timestamp);
     Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb);
     jsonDb.clear();
   }
@@ -806,19 +827,22 @@ void loop()
   // prepocty
   uint32_t hodnotaI32;
   hodnotaI32 = (au16data2[0] << 16 | au16data2[1]);
-  vykonCinny1 = *(float *)&hodnotaI32 * 1000;
+  vykonCinny1 = *(float *)&hodnotaI32;
 
   hodnotaI32 = (au16data2[2] << 16 | au16data2[3]);
-  energiaVyrobena1 = *(float *)&hodnotaI32 * 100;
+  energiaVyrobena1 = *(float *)&hodnotaI32 * 0.1;
 
   hodnotaI32 = (au16data3[0] << 16 | au16data3[1]);
-  vykonCinny2 = *(float *)&hodnotaI32 * 1000;
+  vykonCinny2 = *(float *)&hodnotaI32;
 
   hodnotaI32 = (au16data3[2] << 16 | au16data3[3]);
-  energiaVyrobena2 = *(float *)&hodnotaI32 * 100;
+  energiaVyrobena2 = *(float *)&hodnotaI32 * 0.1;
 
-  energiaCelkovo = (au16data1[2] << 16 | au16data1[3]);
-  energiaAktualna = (au16data1[12] << 16 | au16data1[13]);
+  hodnotaI32 = (au16data1[2] << 16 | au16data1[3]);
+  energiaCelkovo = hodnotaI32 * 0.01;
+
+  hodnotaI32 = (au16data1[12] << 16 | au16data1[13]);
+  energiaAktualna = hodnotaI32 * 0.001;
 
   teplotaVstupna = (au16data1[14] << 16 | au16data1[15]) * 0.01;
   teplotaVystupna = (au16data1[16] << 16 | au16data1[17]) * 0.01;
