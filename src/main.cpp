@@ -38,6 +38,7 @@
 
 // Insert Firebase project API Key
 #define API_KEY "AIzaSyA5TB8C1WdQoQnel--D7pe_vpnro0Vu2Bg"
+// #define API_KEY "AIzaSyCIQN38pHQlcLp0_ujse-owqncyLZIHTLk"
 
 // Insert Authorized Email and Corresponding Password
 #define USER_EMAIL "robert.mysza@gmail.com"
@@ -45,6 +46,7 @@
 
 // Insert RTDB URLefine the RTDB URL */
 #define DATABASE_URL "https://coolerstation-698c0-default-rtdb.europe-west1.firebasedatabase.app/"
+// #define DATABASE_URL "https://coolerstation-32933-default-rtdb.europe-west1.firebasedatabase.app/"
 
 // Define Firebase Data object
 FirebaseData fbdo;
@@ -103,7 +105,7 @@ typedef struct HistoryData
   int32_t energiaCelkovo;
   float teplotaVonkajsia;
   String timestamp;
-  int rok, mesiac, den, hodina, minuta, sekunda;
+  int rok, mesiac, den, hodiny, minuty, sekundy;
 } HistoryData;
 CircularBuffer<HistoryData, 10> historyData;
 
@@ -164,6 +166,8 @@ int casOLED;
 int casRTC;
 bool komunikacia;
 int32_t prirastok;
+int rok, mesiac, den, denTyzdna, hodiny, minuty, sekundy;
+bool isDstSet;
 
 // ##########################################################################
 
@@ -190,7 +194,7 @@ Firebase_StaticIP staIP(staticIP, subnetIP, gatewayIP, gatewayIP, true);
 // A UDP instance to let us send and receive packets over UDP
 EthernetUDP ntpUDP;
 
-NTPClient timeClient(ntpUDP, 3600);
+NTPClient timeClient(ntpUDP, gmtOffset_sec);
 
 #define LEAP_YEAR(Y) ((Y > 0) && !(Y % 4) && ((Y % 100) || !(Y % 400)))
 
@@ -230,43 +234,26 @@ String toStrDate(int date)
 
 String getTimestamp()
 {
-  hoursStr = toStrDate(myRTC.hours);
-  minutesStr = toStrDate(myRTC.minutes);
-  secondsStr = toStrDate(myRTC.seconds);
   return hoursStr + ":" + minutesStr + ":" + secondsStr;
 }
 
 String getDateTimestamp()
 {
-  yearStr = String(myRTC.year);
-  monthStr = toStrDate(myRTC.month);
-  dayStr = toStrDate(myRTC.dayofmonth);
   return yearStr + "-" + monthStr + "-" + dayStr + " " + getTimestamp();
 }
 
 String getTimeStampRecord()
 {
-  hoursStr = toStrDate(myRTC.hours);
-  minutesStr = toStrDate(myRTC.minutes);
-  secondsStr = toStrDate(myRTC.seconds);
-  yearStr = String(myRTC.year);
-  monthStr = toStrDate(myRTC.month);
-  dayStr = toStrDate(myRTC.dayofmonth);
   return yearStr + monthStr + dayStr + hoursStr + minutesStr + secondsStr;
 }
 
 String getActualSDPath()
 {
-  yearStr = String(myRTC.year);
-  monthStr = toStrDate(myRTC.month);
   return "/" + yearStr + "_" + monthStr;
 }
 
 String getActualSDFilename()
 {
-  yearStr = String(myRTC.year);
-  monthStr = toStrDate(myRTC.month);
-  dayStr = toStrDate(myRTC.dayofmonth);
   return yearStr + "_" + monthStr + "_" + dayStr + ".csv";
 }
 
@@ -313,48 +300,110 @@ void oled1()
   display.display();
 }
 
+bool isDaylightSavingTime(int hours, int dayOfWeek, int day, int month, int year)
+{
+  if (month < 3 || month > 11)
+  {
+    // January, February, and December are out.
+    return false;
+  }
+  if (month > 3 && month < 11)
+  {
+    // April to October are in
+    return true;
+  }
+  int previousSunday = day - dayOfWeek;
+  // In March, we are DST if our previous Sunday was on or after the 8th.
+  if (month == 3)
+  {
+    if (dayOfWeek == 0 && day >= 25 && hours < 2) // day of changing time
+    {
+      return false;
+    }
+    return previousSunday >= 8;
+  }
+  // In November we must be before the first Sunday to be DST.
+  // That means the previous Sunday must be before the 1st.
+  if (dayOfWeek == 0 && day >= 25 && hours < 3) // day of changing time
+  {
+    return true;
+  }
+  return previousSunday <= 0;
+}
+
 void getDateTime()
 {
-  unsigned long epoch = timeClient.getEpochTime();
-  unsigned long rawTime = epoch / 86400L; // in days
-  unsigned long days = 0, year = 1970;
-  uint8_t month, hours, minutes, seconds;
+  unsigned long epoch;
+  unsigned long rawTime;
+  unsigned long days, year;
+  uint8_t month, day, dayOfWeek, hours, minutes, seconds;
   static const uint8_t monthDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
-  while ((days += (LEAP_YEAR(year) ? 366 : 365)) <= rawTime)
-    year++;
-  rawTime -= days - (LEAP_YEAR(year) ? 366 : 365); // now it is days in this year, starting at 0
-  days = 0;
-  for (month = 0; month < 12; month++)
+  bool recalculate;
+  do
   {
-    uint8_t monthLength;
-    if (month == 1)
-    { // february
-      monthLength = LEAP_YEAR(year) ? 29 : 28;
-    }
-    else
-    {
-      monthLength = monthDays[month];
-    }
-    if (rawTime < monthLength)
-      break;
-    rawTime -= monthLength;
-  }
-  hours = timeClient.getHours();
-  minutes = timeClient.getMinutes();
-  seconds = timeClient.getSeconds();
+    recalculate = false;
+    epoch = timeClient.getEpochTime();
+    rawTime = epoch / 86400L; // in days
+    days = 0, year = 1970;
 
-  yearStr = String(year);
-  monthStr = (++month < 10 ? "0" : "") + String(month);   // jan is month 1
-  dayStr = (++rawTime < 10 ? "0" : "") + String(rawTime); // day of month
-  hoursStr = (hours < 10 ? "0" : "") + String(hours);
-  minutesStr = (minutes < 10 ? "0" : "") + String(minutes);
-  secondsStr = (seconds < 10 ? "0" : "") + String(seconds);
+    while ((days += (LEAP_YEAR(year) ? 366 : 365)) <= rawTime)
+      year++;
+    rawTime -= days - (LEAP_YEAR(year) ? 366 : 365); // now it is days in this year, starting at 0
+    days = 0;
+    for (month = 0; month < 12; month++)
+    {
+      uint8_t monthLength;
+      if (month == 1)
+      { // february
+        monthLength = LEAP_YEAR(year) ? 29 : 28;
+      }
+      else
+      {
+        monthLength = monthDays[month];
+      }
+      if (rawTime < monthLength)
+        break;
+      rawTime -= monthLength;
+    }
+    month++;                                // Jan is month 1
+    day = rawTime + 1;                      // first day of month is 1
+    dayOfWeek = ((epoch / 86400L) + 4) % 7; // Thursday is day 0, thus + 4
+    hours = timeClient.getHours();
+    minutes = timeClient.getMinutes();
+    seconds = timeClient.getSeconds();
+
+    // Check if the date falls within the DST range
+    if (!isDstSet && isDaylightSavingTime(hours, dayOfWeek, day, month, year))
+    {
+      isDstSet = true;
+      recalculate = true;
+      timeClient.setTimeOffset(gmtOffset_sec + daylightOffset_sec);
+    }
+  } while (recalculate);
 
   if (year > 1970)
   {
-    myRTC.setDS1302Time(seconds, minutes, hours, 0, rawTime, month, year);
+    myRTC.setDS1302Time(seconds, minutes, hours, dayOfWeek, day, month, year);
   }
+}
+
+void updateTime()
+{
+  rok = myRTC.year;
+  mesiac = myRTC.month;
+  den = myRTC.dayofmonth;
+  denTyzdna = myRTC.dayofweek;
+  hodiny = myRTC.hours;
+  minuty = myRTC.minutes;
+  sekundy = myRTC.seconds;
+
+  yearStr = String(rok);
+  monthStr = toStrDate(mesiac);
+  dayStr = toStrDate(den);
+  hoursStr = toStrDate(hodiny);
+  minutesStr = toStrDate(minuty);
+  secondsStr = toStrDate(sekundy);
 }
 
 void setupFirebase()
@@ -439,7 +488,7 @@ void sendFirebaseDbData()
   {
     HistoryData last = historyData.pop();
 
-    String lastTimeStampRecord = last.rok + toStrDate(last.mesiac) + toStrDate(last.den) + toStrDate(last.hodina) + toStrDate(last.minuta) + toStrDate(last.sekunda);
+    String lastTimeStampRecord = last.rok + toStrDate(last.mesiac) + toStrDate(last.den) + toStrDate(last.hodiny) + toStrDate(last.minuty) + toStrDate(last.sekundy);
 
     String dbDataPath = espDataPath + dataPath + "/" + lastTimeStampRecord;
 
@@ -469,9 +518,9 @@ void sendFirebaseDbData()
   jsonDb.set("/energiaCelkovo", energiaCelkovo);
   jsonDb.set("/teplotaVonkajsia", teplotaVonkajsia);
   jsonDb.set("/cas", timestamp);
-  jsonDb.set("/rok", myRTC.year);
-  jsonDb.set("/mesiac", myRTC.month);
-  jsonDb.set("/den", myRTC.dayofmonth);
+  jsonDb.set("/rok", rok);
+  jsonDb.set("/mesiac", mesiac);
+  jsonDb.set("/den", den);
 
   displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
   jsonDb.clear();
@@ -483,7 +532,7 @@ void sendFirebaseDbData()
   else if (historyCounter < 10)
   {
     historyCounter++;
-    historyData.unshift({energiaVyrobenaCelkovo, energiaVyrobena1, energiaVyrobena2, energiaCelkovo, teplotaVonkajsia, timestamp, myRTC.year, myRTC.month, myRTC.dayofmonth});
+    historyData.unshift({energiaVyrobenaCelkovo, energiaVyrobena1, energiaVyrobena2, energiaCelkovo, teplotaVonkajsia, timestamp, rok, mesiac, den});
   }
 }
 
@@ -552,6 +601,13 @@ void initInternetConnection()
     displayString = "Not connected";
     connected = false;
     cableConnected = false;
+    if (rok > 1970)
+    {
+      if (isDaylightSavingTime(hodiny, denTyzdna, den, mesiac, rok))
+      {
+        isDstSet = true;
+      }
+    }
   }
   oled1();
 }
@@ -569,6 +625,7 @@ void setup()
   digitalWrite(led, false);
 
   myRTC.updateTime();
+  updateTime();
 
   display.begin(SSD1306_SWITCHCAPVCC, 0x3c); // nie 3D
   display.setRotation(0);
@@ -677,7 +734,9 @@ void loop()
 
   Ethernet.maintain(); // pri DHCP
 
-  if (ethernetLinkStatus != Ethernet.linkStatus() || (myRTC.dayofmonth == 0))
+  updateTime();
+
+  if (ethernetLinkStatus != Ethernet.linkStatus() || (den == 0))
   {
     displayString = "Restarting" + String(Ethernet.linkStatus());
     delay(3000);
@@ -725,6 +784,7 @@ void loop()
     oled1();
   }
 
+  //--------------------DATA FIREBASE----------------------
   if (timerActualData > TIME_ACTUAL_DATA)
   {
     timerActualData = 0;
@@ -763,6 +823,19 @@ void loop()
         sendFirebaseDbData();
       }
     }
+  }
+
+  //--------------------DST----------------------
+  // Adjust time by daylight saving time
+  if (denTyzdna == 0 && mesiac == 3 && den >= 25 && hodiny == 2 && !isDstSet)
+  {
+    isDstSet = true;
+    myRTC.setDS1302Time(sekundy, minuty, hodiny + 1, denTyzdna, den, mesiac, rok);
+  }
+  if (denTyzdna == 0 && mesiac == 10 && den >= 25 && hodiny == 3 && isDstSet)
+  {
+    isDstSet = false;
+    myRTC.setDS1302Time(sekundy, minuty, hodiny - 1, denTyzdna, den, mesiac, rok);
   }
 
   //---------------casovace ------------------------------------
