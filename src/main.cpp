@@ -21,7 +21,7 @@
 #include "Adafruit_SSD1306.h"
 
 #include <Firebase_ESP_Client.h>
-#include <CircularBuffer.hpp>
+// #include <CircularBuffer.hpp>
 
 // Provide the token generation process info.
 #include "addons/TokenHelper.h"
@@ -97,17 +97,17 @@ float teplotaVstupna;
 float teplotaVystupna;
 
 // History data
-typedef struct HistoryData
-{
-  float energiaVyrobena1;
-  float energiaVyrobena2;
-  float energiaVyrobenaCelkovo;
-  int32_t energiaCelkovo;
-  float teplotaVonkajsia;
-  String timestamp;
-  int rok, mesiac, den, hodiny, minuty, sekundy;
-} HistoryData;
-CircularBuffer<HistoryData, 10> historyData;
+// typedef struct HistoryData
+// {
+//   float energiaVyrobena1;
+//   float energiaVyrobena2;
+//   float energiaVyrobenaCelkovo;
+//   int32_t energiaCelkovo;
+//   float teplotaVonkajsia;
+//   String timestamp;
+//   int rok, mesiac, den, hodiny, minuty, sekundy;
+// } HistoryData;
+// CircularBuffer<HistoryData, 10> historyData;
 
 int historyCounter;
 
@@ -484,31 +484,31 @@ void sendFirebaseDbData()
 {
   String timestamp = getDateTimestamp();
 
-  for (; historyCounter > 0; historyCounter--)
-  {
-    HistoryData last = historyData.pop();
+  // for (; historyCounter > 0; historyCounter--)
+  // {
+  //   HistoryData last = historyData.pop();
 
-    String lastTimeStampRecord = last.rok + toStrDate(last.mesiac) + toStrDate(last.den) + toStrDate(last.hodiny) + toStrDate(last.minuty) + toStrDate(last.sekundy);
+  //   String lastTimeStampRecord = last.rok + toStrDate(last.mesiac) + toStrDate(last.den) + toStrDate(last.hodiny) + toStrDate(last.minuty) + toStrDate(last.sekundy);
 
-    String dbDataPath = espDataPath + dataPath + "/" + lastTimeStampRecord;
+  //   String dbDataPath = espDataPath + dataPath + "/" + lastTimeStampRecord;
 
-    jsonDb.set("/energiaVyrobenaCelkovo", last.energiaVyrobenaCelkovo);
-    jsonDb.set("/energiaVyrobena1", last.energiaVyrobena1);
-    jsonDb.set("/energiaVyrobena2", last.energiaVyrobena2);
-    jsonDb.set("/energiaCelkovo", last.energiaCelkovo);
-    jsonDb.set("/teplotaVonkajsia", last.teplotaVonkajsia);
-    jsonDb.set("/cas", last.timestamp);
-    jsonDb.set("/rok", last.rok);
-    jsonDb.set("/mesiac", last.mesiac);
-    jsonDb.set("/den", last.den);
+  //   jsonDb.set("/energiaVyrobenaCelkovo", last.energiaVyrobenaCelkovo);
+  //   jsonDb.set("/energiaVyrobena1", last.energiaVyrobena1);
+  //   jsonDb.set("/energiaVyrobena2", last.energiaVyrobena2);
+  //   jsonDb.set("/energiaCelkovo", last.energiaCelkovo);
+  //   jsonDb.set("/teplotaVonkajsia", last.teplotaVonkajsia);
+  //   jsonDb.set("/cas", last.timestamp);
+  //   jsonDb.set("/rok", last.rok);
+  //   jsonDb.set("/mesiac", last.mesiac);
+  //   jsonDb.set("/den", last.den);
 
-    displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
-    if (displayString != "OK")
-    {
-      historyData.push(last);
-      break;
-    }
-  }
+  //   displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
+  //   if (displayString != "OK")
+  //   {
+  //     historyData.push(last);
+  //     break;
+  //   }
+  // }
 
   String dbDataPath = espDataPath + dataPath + "/" + getTimeStampRecord();
 
@@ -525,15 +525,15 @@ void sendFirebaseDbData()
   displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
   jsonDb.clear();
 
-  if (displayString == "OK")
-  {
-    historyCounter = 0;
-  }
-  else if (historyCounter < 10)
-  {
-    historyCounter++;
-    historyData.unshift({energiaVyrobenaCelkovo, energiaVyrobena1, energiaVyrobena2, energiaCelkovo, teplotaVonkajsia, timestamp, rok, mesiac, den});
-  }
+  // if (displayString == "OK")
+  // {
+  //   historyCounter = 0;
+  // }
+  // else if (historyCounter < 10)
+  // {
+  //   historyCounter++;
+  //   historyData.unshift({energiaVyrobenaCelkovo, energiaVyrobena1, energiaVyrobena2, energiaCelkovo, teplotaVonkajsia, timestamp, rok, mesiac, den, hodiny, minuty, sekundy});
+  // }
 }
 
 void sendFirebaseLiveData()
@@ -557,7 +557,7 @@ void sendFirebaseLiveData()
 
   bool firstSend = displayString != "OK";
   displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonLive) ? "OK" : fbdo.errorReason().c_str();
-  jsonDb.clear();
+  jsonLive.clear();
 
   connected = displayString == "OK";
   if (!connected && firstSend)
@@ -568,9 +568,9 @@ void sendFirebaseLiveData()
   {
     firstConnected = false;
     String dbDataPath = espDataPath + historyPath + "/" + timestampRecord;
-    jsonDb.set("/timestamp", timestamp);
-    Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb);
-    jsonDb.clear();
+    jsonLive.set("/timestamp", timestamp);
+    Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonLive);
+    jsonLive.clear();
   }
 }
 
