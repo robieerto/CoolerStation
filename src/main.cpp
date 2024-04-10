@@ -943,7 +943,7 @@ void loop()
     if (master.getState() == COM_IDLE)
     {
       u8state = 0;
-      u32wait = millis() + 200;
+      u32wait = millis() + 800;
     }
     break;
   }
