@@ -523,8 +523,7 @@ void sendFirebaseDbData()
   jsonDb.set("/rok", rok);
   jsonDb.set("/mesiac", mesiac);
   jsonDb.set("/den", den);
-  jsonDb.set("/hodiny", hodiny);
-  jsonDb.set("/minuty", minuty);
+  jsonDb.set("/hodinyMinuty", getTimestamp());
 
   displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
   jsonDb.clear();
