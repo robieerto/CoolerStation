@@ -501,6 +501,8 @@ void sendFirebaseDbData()
   //   jsonDb.set("/rok", last.rok);
   //   jsonDb.set("/mesiac", last.mesiac);
   //   jsonDb.set("/den", last.den);
+  //   jsonDb.set("/hodiny", last.hodiny);
+  //   jsonDb.set("/minuty", last.minuty);
 
   //   displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
   //   if (displayString != "OK")
@@ -521,6 +523,8 @@ void sendFirebaseDbData()
   jsonDb.set("/rok", rok);
   jsonDb.set("/mesiac", mesiac);
   jsonDb.set("/den", den);
+  jsonDb.set("/hodiny", hodiny);
+  jsonDb.set("/minuty", minuty);
 
   displayString = Firebase.RTDB.setJSON(&fbdo, dbDataPath.c_str(), &jsonDb) ? "OK" : fbdo.errorReason().c_str();
   jsonDb.clear();
